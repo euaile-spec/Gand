@@ -111,6 +111,8 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
   // Desired speed
   let v0 = link.speedLimit * p.desiredSpeedFactor;
   if (m && m.turn !== 'T' && link.length - pos < 40) v0 = Math.min(v0, m.speed + 3);
+  // Nobody drives through an uncontrolled crossing at speed: approach at a cautious crawl.
+  if (m && node.control.type === 'uncontrolled' && node.legs.length >= 3 && link.length - pos < 30) v0 = Math.min(v0, 5);
   if (lane.width < 3.2) v0 *= 0.92;
 
   // ── Obstacles ──
@@ -230,7 +232,7 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
   else v.patience = clamp(v.patience + world.config.patienceRecoverPerSec * dt, 0, 1);
 
   // Improvise: stuck in the wrong lane with no patience → take whatever turn this lane allows.
-  if (v.speed < 0.3 && v.patience < world.config.improviseBelow && m && !inRequired && !v.cyclic) {
+  if (v.speed < 0.3 && m && !inRequired && !v.cyclic && (v.patience < world.config.improviseBelow || (lane.allowed.length === 0 && nearLine))) {
     improvise(world, v, lane, link);
   }
 
@@ -366,7 +368,7 @@ function doChange(world: World, v: Vehicle, from: Lane, to: Lane, pos: number): 
 /** Driver gives up on the required lane and takes a turn the current lane allows, re-routing after it. */
 function improvise(world: World, v: Vehicle, lane: Lane, link: Link): void {
   const node = world.nodes[link.to];
-  const options = Object.values(node.movements).filter((m) => m.fromLink === link.id && lane.allowed.includes(m.turn) && !node.banned.includes(m.key));
+  const options = Object.values(node.movements).filter((m) => m.fromLink === link.id && (lane.allowed.length === 0 || lane.allowed.includes(m.turn)) && !node.banned.includes(m.key));
   if (!options.length) return;
   const m = options[0];
   v.improvising = true;

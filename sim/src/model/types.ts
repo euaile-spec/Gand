@@ -80,6 +80,8 @@ export interface Lane {
   protectedBus?: boolean;
   /** Pocket is a bus queue-jump (buses only). */
   busOnly?: boolean;
+  /** Parking lane currently opened to traffic by a peak-hour ban. */
+  peakLane?: boolean;
   /** Channelised right-turn slip lane with an island: bypasses the signal. */
   slip?: boolean;
   slipMode?: 'yield' | 'free';

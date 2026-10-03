@@ -83,7 +83,7 @@ export function rollIncidents(world: World, dt: number): void {
   for (const node of Object.values(world.nodes)) {
     const sc = node.metrics.conflictScore;
     if (sc <= 0) continue;
-    const ratePerSec = (0.02 * sc * scale) / 3600;
+    const ratePerSec = (0.08 * sc * scale) / 3600;
     if (!poissonEvent(world.rng, ratePerSec, dt)) continue;
     const { worst } = conflictScore(world, node);
     const severe = chance(world.rng, 0.12);

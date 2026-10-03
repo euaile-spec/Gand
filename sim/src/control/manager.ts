@@ -16,7 +16,7 @@ export const CRITICAL_GAP = {
   minorLeft: 7.1,
   minorRight: 6.2,
   yieldThrough: 5.0,
-  uncontrolled: 4.0,
+  uncontrolled: 5.0,
   roundabout: 4.3,
   pedYield: 2.0,
 };
@@ -107,7 +107,7 @@ function gapAccepted(world: World, node: SimNode, m: Movement, v: Vehicle, appro
       if (a.v.stopLineArrival === 0 || (v.stopLineArrival > 0 && a.v.stopLineArrival > v.stopLineArrival)) continue;
       // A vehicle that has sat at the line for a while is waiting on something else (blocked, no gap):
       // drivers go around it rather than wait forever.
-      if (world.t - a.v.stopLineArrival > 8) continue;
+      if (world.t - a.v.stopLineArrival > 15) continue;
       if (v.stopLineArrival > 0 && a.v.stopLineArrival === v.stopLineArrival && a.v.id > v.id) continue;
       lastGapThreat = `${a.v.id}@${a.movement.key} stopped-at-line arrived ${a.v.stopLineArrival.toFixed(0)} vs mine ${v.stopLineArrival.toFixed(0)}`;
       return false;
@@ -308,7 +308,7 @@ export function destinationHasRoom(world: World, node: SimNode, v: Vehicle, m: M
 /** Lane on the destination link the vehicle lands in: left → leftmost, right → rightmost, through → same index. */
 export function destinationLane(world: World, v: Vehicle, m: Movement) {
   const dest = world.links[m.toLink];
-  const general = dest.lanes.filter((l) => l.type === 'general' || (l.type === 'bus' && (v.cls === 'bus' || v.cls === 'emergency')));
+  const general = dest.lanes.filter((l) => (l.type === 'general' || (l.type === 'bus' && (v.cls === 'bus' || v.cls === 'emergency'))) && (l.allowed.length > 0 || l.end < dest.length - 0.5));
   // Prefer a lane that allows the vehicle's *following* turn when the link is short.
   if (!general.length) return null;
   const from = world.links[m.fromLink];

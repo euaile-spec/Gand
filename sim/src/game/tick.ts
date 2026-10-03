@@ -66,29 +66,25 @@ export function onNewDay(world: World): void {
   scheduleDailyEvents(world);
 }
 
-/** Peak-hour parking bans: the parking lane becomes a travel lane during peaks. */
+/** Peak-hour parking bans: the curb lane carries traffic during peaks and reverts when it empties. */
 export function applyPeakParking(world: World): void {
   const peak = isPeakHour(timeOfDay(world));
   for (const link of Object.values(world.links)) {
     if (link.parking !== 'peak-ban') continue;
-    const lane = link.lanes.find((l) => l.index === link.lanes.filter((x) => x.type !== 'parking' || x === l).length - 1 && (l.type === 'parking' || l.width < 3.2));
-    const target = link.lanes[link.lanes.length - 1];
-    if (!target) continue;
-    if (peak && target.type === 'parking') {
-      target.type = 'general';
-      target.width = 3.0;
-      const n = link.lanes.filter((l) => l.type === 'general').length;
-      target.allowed = defaultAllowed(n, n - 1);
-      // The former rightmost lane loses its right-turn exclusivity.
-      const prev = link.lanes.filter((l) => l.type === 'general')[n - 2];
-      if (prev && n > 1) prev.allowed = defaultAllowed(n, n - 2);
-    } else if (!peak && target.type === 'general' && target.width <= 3.0 && lane === target) {
-      target.type = 'parking';
-      target.allowed = [];
-      const general = link.lanes.filter((l) => l.type === 'general');
-      general.forEach((l, i) => (l.allowed = l.allowed.length ? l.allowed : defaultAllowed(general.length, i)));
-      const last = general[general.length - 1];
-      if (last && !last.allowed.includes('R')) last.allowed = [...last.allowed, 'R'];
+    const curb = link.lanes[link.lanes.length - 1];
+    if (!curb) continue;
+    if (peak && curb.type === 'parking') {
+      curb.type = 'general';
+      curb.peakLane = true;
+      curb.width = 3.0;
+      curb.allowed = ['T', 'R'];
+    } else if (!peak && curb.peakLane) {
+      // Nobody chooses it any more; it becomes parking again once the last vehicle has merged out.
+      curb.allowed = [];
+      if (curb.vehicles.length === 0) {
+        curb.type = 'parking';
+        curb.peakLane = false;
+      }
     }
   }
 }
