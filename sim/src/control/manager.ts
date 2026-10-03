@@ -98,7 +98,7 @@ function gapAccepted(world: World, node: SimNode, m: Movement, v: Vehicle, appro
     if (a.v.id === v.id) continue;
     if (a.movement.fromLink === m.fromLink) continue;
     const k = conflictKind(node, m, a.movement);
-    if (k === 'none') continue;
+    if (k === 'none' && !m.slip) continue;
     if (!prioritySet(a)) continue;
     // A stopped vehicle is only a threat when it is at the line and got there first (it has precedence);
     // moving vehicles are judged by time-to-arrival.
@@ -149,6 +149,9 @@ export function mayEnter(world: World, node: SimNode, v: Vehicle, m: Movement, a
   // Box protection: enough room on the destination lane?
   if (node.boxProtection && !destinationHasRoom(world, node, v, m)) return NO('box');
 
+  // Channelised right-turn slip lane: outside the box, outside the signal.
+  if (m.slip) return slipEntry(world, node, v, m, approaching);
+
   const occ = conflictingOccupant(world, node, m, v);
   if (occ.hard) return NO('occupied');
 
@@ -187,8 +190,8 @@ export function mayEnter(world: World, node: SimNode, v: Vehicle, m: Movement, a
       }
       // Red. Right on red / channelised right.
       const leg = node.legs.find((l) => l.leg === m.entryLeg);
-      if (m.turn === 'R' && (leg?.channelisedRight || node.control.signal?.rightOnRed[m.fromLink])) {
-        if (!leg?.channelisedRight && !stoppedOk(v)) return NO('stop-first', true);
+      if (m.turn === 'R' && node.control.signal?.rightOnRed[m.fromLink]) {
+        if (!stoppedOk(v)) return NO('stop-first', true);
         if (pedInCrosswalk(node, m, world)) return NO('peds');
         const ok = gapAccepted(world, node, m, v, approaching, CRITICAL_GAP.rightOnRed, (a) => sig.green(a.movement.key) || a.movement.turn === 'R' && a.atLine && a.v.id < v.id);
         if (!ok) return NO('gap');
@@ -231,6 +234,28 @@ export function mayEnter(world: World, node: SimNode, v: Vehicle, m: Movement, a
     }
   }
   return NO('unknown');
+}
+
+/** Slip lane: yield to traffic about to merge onto the same exit (yield mode) and to peds crossing the slip. */
+function slipEntry(world: World, node: SimNode, v: Vehicle, m: Movement, approaching: Approaching[]): EntryDecision {
+  const leg = node.legs.find((l) => l.leg === m.entryLeg);
+  const pedKey = `ped:${m.exitLeg}`;
+  const ped = node.peds[pedKey];
+  if (ped?.enabled && ped.crossingUntil > world.t) return NO('peds');
+  if (leg?.slipMode === 'free') return { go: true, mergeLeader: null };
+  // Vehicles inside the node heading for the same exit are about to occupy the merge.
+  for (const id of node.occupants) {
+    const o = world.vehicles[id];
+    if (!o || o.place.kind !== 'node' || o.id === v.id) continue;
+    const om = node.movements[o.place.movement];
+    if (om && om.toLink === m.toLink && !om.slip && om.length - o.place.pos < 12) return NO('gap');
+  }
+  const sig = node.control.type === 'signal' ? signalView(node, world) : null;
+  const ok = gapAccepted(world, node, m, v, approaching, 4.0, (a) => {
+    if (a.movement.toLink !== m.toLink || a.movement.slip) return false;
+    return sig ? sig.green(a.movement.key) : true;
+  });
+  return ok ? { go: true, mergeLeader: null } : NO('gap');
 }
 
 function allWayStop(world: World, node: SimNode, v: Vehicle, m: Movement, approaching: Approaching[], mergeAhead: Vehicle | null): EntryDecision {

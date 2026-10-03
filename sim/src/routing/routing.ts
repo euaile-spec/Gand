@@ -24,6 +24,7 @@ interface Edge {
 /** Expected delay for using a movement, from observed node metrics or control-based defaults. */
 export function movementCost(world: World, node: SimNode, m: Movement): number {
   const c = node.control;
+  if (m.slip) return 3 + m.length / Math.max(1, m.speed);
   let base: number;
   switch (c.type) {
     case 'signal': {

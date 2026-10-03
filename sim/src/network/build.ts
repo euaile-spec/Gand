@@ -233,6 +233,7 @@ export function buildWorld(def: MapDef, seed = 1, configOverrides: Partial<World
       outLink: null,
       angle: headings.find((h) => h.roadId === r.id)!.angle,
       channelisedRight: false,
+      slipMode: 'yield',
       cornerRadius: 'standard',
       laneDrop: 'after',
     }));

@@ -37,6 +37,8 @@ export interface Movement {
   length: number;
   /** Speed cap inside the node for this movement. */
   speed: number;
+  /** Right turn served by a channelised slip lane: no vehicle conflicts, not in any phase. */
+  slip?: boolean;
 }
 
 /** Pedestrian crossing of leg `leg` at a node. Key `ped:${leg}`. */
@@ -78,6 +80,9 @@ export interface Lane {
   protectedBus?: boolean;
   /** Pocket is a bus queue-jump (buses only). */
   busOnly?: boolean;
+  /** Channelised right-turn slip lane with an island: bypasses the signal. */
+  slip?: boolean;
+  slipMode?: 'yield' | 'free';
 }
 
 export type ParkingMode = 'none' | 'always' | 'peak-ban';
@@ -276,6 +281,7 @@ export interface NodeLeg {
   angle: number; // heading from node centre out along this leg
   /** Right-turn slip lane with island: right turns bypass the signal, yield to peds on island side. */
   channelisedRight: boolean;
+  slipMode: 'yield' | 'free';
   cornerRadius: 'tight' | 'standard' | 'wide';
   /** Lane-drop placement for vehicles leaving on this leg: after node (merge downstream) vs before. */
   laneDrop: 'after' | 'before';

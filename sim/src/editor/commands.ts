@@ -21,6 +21,7 @@ import {
   renormaliseSignals,
   setBusStopKind,
   setLaneType,
+  setSlipLane,
   setMedian,
   setOneWay,
   setParking,
@@ -47,7 +48,7 @@ export type Command =
   | { type: 'setNoLeftIntoDriveways'; linkId: LinkId; on: boolean }
   // node geometry
   | { type: 'setLaneDrop'; nodeId: NodeId; leg: number; mode: 'after' | 'before' }
-  | { type: 'setChannelisedRight'; nodeId: NodeId; leg: number; on: boolean }
+  | { type: 'setChannelisedRight'; nodeId: NodeId; leg: number; on: boolean; mode?: 'yield' | 'free'; storage?: number }
   | { type: 'setCornerRadius'; nodeId: NodeId; leg: number; radius: 'tight' | 'standard' | 'wide' }
   | { type: 'setBoxProtection'; nodeId: NodeId; on: boolean }
   | { type: 'setPedCrossing'; nodeId: NodeId; leg: number; enabled: boolean }
@@ -83,6 +84,8 @@ export type Command =
   | { type: 'weeklyChoice'; choice: 'token' | 'lanes' }
   | { type: 'defineCorridor'; id: string; nodeIds: NodeId[] }
   | { type: 'unlock'; keys: string[] };
+
+export const SLIP_COST_KM = 0.04;
 
 const UNLOCK_FOR: Partial<Record<Command['type'], string>> = {
   setPocket: 'pocket',
@@ -255,7 +258,13 @@ function dispatch(world: World, cmd: Command): Result {
       const n = node(world, cmd.nodeId);
       const leg = n.legs.find((l) => l.leg === cmd.leg);
       if (!leg) return fail('No such leg');
-      leg.channelisedRight = cmd.on;
+      const was = leg.channelisedRight;
+      if (cmd.on && !was && !canAffordLaneKm(world, SLIP_COST_KM)) return fail(`Needs ${SLIP_COST_KM} lane-km for the island and slip lane`);
+      const r = setSlipLane(world, n.id, cmd.leg, cmd.on, cmd.mode ?? 'yield', cmd.storage);
+      if (!r.ok) return r;
+      if (cmd.on && !was) spendLaneKm(world, SLIP_COST_KM);
+      if (!cmd.on && was) refundLaneKm(world, SLIP_COST_KM);
+      touched(world, n.id);
       return ok;
     }
     case 'setCornerRadius': {

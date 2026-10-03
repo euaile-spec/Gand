@@ -157,7 +157,8 @@ export function rebuildNodeMovements(
       const key = `${leg.inLink}:${turn}`;
       if (node.banned.includes(key)) continue;
       const g = movementGeometry(turn, node.radius, linkSpeed(leg.inLink));
-      movements[key] = { key, fromLink: leg.inLink, toLink: exitLeg.outLink, turn, entryLeg: leg.leg, exitLeg: exit, length: g.length, speed: g.speed };
+      const slip = turn === 'R' && leg.channelisedRight;
+      movements[key] = { key, fromLink: leg.inLink, toLink: exitLeg.outLink, turn, entryLeg: leg.leg, exitLeg: exit, length: slip ? g.length * 1.6 : g.length, speed: slip ? Math.min(linkSpeed(leg.inLink), 8) : g.speed, slip };
     }
   }
   node.movements = movements;
@@ -167,7 +168,8 @@ export function rebuildNodeMovements(
   for (const leg of node.legs) {
     const key = `ped:${leg.leg}`;
     const prev = node.peds[key];
-    const width = roadWidth(leg.roadId);
+    // A slip-lane island takes the right-turn lane out of the main crossing.
+    const width = Math.max(6, roadWidth(leg.roadId) - (leg.channelisedRight ? 3.5 : 0));
     peds[key] = prev ? { ...prev, width } : { key, leg: leg.leg, enabled: true, width, waiting: 0, crossingUntil: 0, delayAccum: 0, served: 0 };
   }
   node.peds = peds;
@@ -183,6 +185,21 @@ export function rebuildNodeMovements(
     conflicts[p.key] = {};
     for (const a of keys) conflicts[p.key][a] = pedConflict(p, movements[a]);
     for (const q of Object.values(peds)) conflicts[p.key][q.key] = 'none';
+  }
+  // Slip lanes are physically separated from the box: no vehicle conflicts; they only cross the
+  // exit leg's crosswalk (soft), and the island removes them from the entry leg's crossing.
+  for (const a of keys) {
+    const ma = movements[a];
+    if (!ma.slip) continue;
+    for (const b of keys) {
+      conflicts[a][b] = 'none';
+      conflicts[b][a] = 'none';
+    }
+    for (const p of Object.values(peds)) {
+      const k: ConflictKind = p.leg === ma.exitLeg ? 'ped-soft' : 'none';
+      conflicts[a][p.key] = k;
+      conflicts[p.key][a] = k;
+    }
   }
   // CFI / DDI style overrides: declared pairs no longer conflict.
   if (node.conflictOverrides) {

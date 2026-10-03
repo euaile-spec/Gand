@@ -2,7 +2,7 @@
 import { ringCreate, ringPush } from '../core/util.js';
 import { LOS_THRESHOLDS, type SimNode, type World } from '../model/types.js';
 import { allTrafficLanes, laneSatFlow, lanesAllowing } from '../network/lanes.js';
-import { signalCapacities } from '../control/signal.js';
+import { signalCapacities, slipCapacity } from '../control/signal.js';
 import { queueLength } from '../traffic/access.js';
 
 const TMC_WINDOW = 900; // 15 min
@@ -39,6 +39,10 @@ function unsignalisedCapacities(node: SimNode, world: World, demand: Record<stri
   const c = node.control;
   for (const m of Object.values(node.movements)) {
     const lanes = lanesAllowing(world.links[m.fromLink], m.turn).length || 1;
+    if (m.slip) {
+      out[m.key] = slipCapacity(node, m, lanes);
+      continue;
+    }
     // Conflicting flow: sum of demand on movements with a cross conflict that have priority.
     let vc = 0;
     for (const o of Object.values(node.movements)) {

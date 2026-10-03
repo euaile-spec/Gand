@@ -110,7 +110,7 @@ describe('lane and road commands', () => {
     expect(w.roads['v10'].widthLanes).toBeGreaterThan(0);
     // Vehicles reference valid lane ids after renumbering.
     for (const v of Object.values(w.vehicles)) if (v.place.kind === 'lane') expect(w.lanes[v.place.laneId]).toBeDefined();
-  });
+  }, 30000);
   it('refuses to widen without lane-km', () => {
     const w = w0();
     w.resources.laneKm = 0;

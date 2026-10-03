@@ -93,8 +93,8 @@ function concurrentPeds(node: SimNode, movements: string[]): string[] {
 export function normalisePlan(node: SimNode, world: World, plan: SignalPlan): void {
   const ig = intergreen(node, world);
   const inter = ig.yellow + ig.allRed;
-  // Drop movements that no longer exist.
-  for (const ph of plan.phases) ph.movements = ph.movements.filter((m) => node.movements[m]);
+  // Drop movements that no longer exist or are served by a slip lane (they never need green).
+  for (const ph of plan.phases) ph.movements = ph.movements.filter((m) => node.movements[m] && !node.movements[m].slip);
   plan.phases = plan.phases.filter((ph) => ph.movements.length || ph.id === -1);
   const exclusive = plan.pedTreatment === 'exclusive' || plan.pedTreatment === 'scramble';
   let pedPhase = plan.phases.find((p) => p.id === -1);
@@ -529,6 +529,10 @@ export function signalCapacities(node: SimNode, world: World, satFlow: (laneId: 
   for (const m of Object.values(node.movements)) {
     const link = world.links[m.fromLink];
     const lanes = lanesAllowing(link, m.turn);
+    if (m.slip) {
+      out[m.key] = slipCapacity(node, m, lanes.length || 1);
+      continue;
+    }
     let g = 0;
     for (const i of phaseServing(plan, m.key)) g += Math.max(0, plan.phases[i].split - lost + 2);
     const permittedFactor = m.turn === 'L' && (plan.leftTreatment[m.fromLink] ?? 'permitted') === 'permitted' ? 0.45 : m.turn === 'R' ? 0.85 : 1;
@@ -538,6 +542,17 @@ export function signalCapacities(node: SimNode, world: World, satFlow: (laneId: 
     out[m.key] = cap;
   }
   return out;
+}
+
+/** Capacity of a channelised right: free-flow ~1500/lane; yield depends on the cross-street flow it merges with. */
+export function slipCapacity(node: SimNode, m: Movement, lanes: number): number {
+  const leg = node.legs.find((l) => l.leg === m.entryLeg);
+  if (leg?.slipMode === 'free') return 1500 * lanes;
+  let vc = 0;
+  for (const o of Object.values(node.movements)) if (o.toLink === m.toLink && o.key !== m.key) vc += node.metrics.demand[o.key] ?? 0;
+  const a = Math.exp((-vc * 4.0) / 3600);
+  const b = 1 - Math.exp((-vc * 2.5) / 3600);
+  return lanes * (vc > 0 ? (vc * a) / Math.max(1e-6, b) : 1400);
 }
 
 export function detectorsFor(plan: SignalPlan, laneId: string): Detector[] {

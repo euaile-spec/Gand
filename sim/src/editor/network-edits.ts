@@ -277,6 +277,47 @@ export function setPocket(world: World, link: Link, spec: PocketSpec): Result {
   return ok;
 }
 
+export const SLIP_STORAGE_DEFAULT = 40;
+
+/** Channelised right turn: a right-side slip lane with an island on the inbound link of `leg`. */
+export function setSlipLane(world: World, nodeId: string, legIdx: number, on: boolean, mode: 'yield' | 'free' = 'yield', storage = SLIP_STORAGE_DEFAULT): Result {
+  const node = world.nodes[nodeId];
+  const leg = node?.legs.find((l) => l.leg === legIdx);
+  if (!node || !leg) return fail('No such leg');
+  if (!leg.inLink) return fail('No inbound traffic on that leg');
+  if (node.control.type === 'roundabout') return fail('Roundabouts have no slip lanes');
+  const link = world.links[leg.inLink];
+  if (on) {
+    if (leg.cornerRadius === 'tight') return fail('A tight corner has no room for an island');
+    const exitHasRight = Object.values(node.movements).some((m) => m.fromLink === link.id && m.turn === 'R');
+    if (!exitHasRight && !leg.channelisedRight) return fail('No right turn from that approach');
+    if (link.pocketRight && !link.pocketRight.slip) return fail('Remove the right-turn pocket first');
+    if (mode === 'free' && link.length < 80) return fail('Free-flow slip lanes need an acceleration lane; block too short');
+    if (!link.pocketRight) {
+      const r = setPocket(world, link, { side: 'right', storage: Math.min(storage, link.length - 40), source: 'narrow' });
+      if (!r.ok) return r;
+      // Slip lanes take corner land, not lane width: restore full-width through lanes.
+      for (const l of generalLanes(link)) l.width = LANE_WIDTH_STANDARD;
+    }
+    link.pocketRight!.slip = true;
+    link.pocketRight!.slipMode = mode;
+    link.pocketRight!.width = LANE_WIDTH_STANDARD;
+    leg.channelisedRight = true;
+    leg.slipMode = mode;
+  } else {
+    if (!leg.channelisedRight) return ok;
+    leg.channelisedRight = false;
+    if (link.pocketRight?.slip) {
+      const r = setPocket(world, link, { side: 'right', storage: 0, source: 'narrow' });
+      if (!r.ok) return r;
+    }
+  }
+  refreshLinkSpeed(world, link);
+  refreshNodeLegs(world, node);
+  renormaliseSignals(world, [node.id]);
+  return ok;
+}
+
 export function setMedian(world: World, road: Road, median: Road['median']): Result {
   const before = road.median;
   road.median = median;

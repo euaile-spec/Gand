@@ -15,7 +15,7 @@ npx tsx src/cli/balance.ts 10 1 --signals --growth=1.12   # multi-day balancing 
 |---|---|
 | `src/model/types.ts` | The whole data model: nodes, links, lanes, pockets, movements, conflicts, signals, vehicles, generators, buses, resources, incidents, events, metrics. |
 | `src/network/` | `geometry.ts` legs, movements and the chord-based conflict matrix (+ ped crossings); `build.ts` world from a `MapDef`; `lanes.ts` lane helpers. |
-| `src/control/` | `signal.ts` ring controller (fixed-time, actuated with stop-bar/advance detectors, coordinated offsets, metering, TSP, pre-emption, LPI/exclusive/scramble peds, explicit lost time); `manager.ts` entry permission + gap acceptance for every control type incl. roundabouts, right-on-red, sneakers, box protection. |
+| `src/control/` | `signal.ts` ring controller (fixed-time, actuated with stop-bar/advance detectors, coordinated offsets, metering, TSP, pre-emption, LPI/exclusive/scramble peds, explicit lost time); `manager.ts` entry permission + gap acceptance for every control type incl. roundabouts, right-on-red, slip lanes (yield/free), sneakers, box protection. |
 | `src/traffic/` | `dynamics.ts` IDM car-following, lane choice/changing, pocket overflow, stop lines, node traversal with box blocking, bus stops (curbside/bay), driveway arrivals (right-in / left-in / TWLTL), median crossovers; `pedestrians.ts`; `driveways.ts` throat queues and right-out/left-out; `trips.ts`. |
 | `src/demand/` | Land-use production/attraction profiles, O-D choice, mode choice (bus share), trucks, emergency vehicles, bus dispatch. |
 | `src/routing/` | Time-dependent Dijkstra over links with control-delay, v/c, stop and unprotected-left penalties; crossover U-turn edges; periodic re-routing; VMS steering. |

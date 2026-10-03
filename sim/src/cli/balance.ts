@@ -37,6 +37,7 @@ if (process.argv.includes('--smart')) {
       const r = g.apply({ type: 'setPocket', linkId: link.id, spec: { side: 'left', storage: 60, source: road.median !== 'none' ? 'median' : 'narrow' } });
       if (!r.ok) console.log('pocket failed', link.id, r.error);
     }
+    if (process.argv.includes('--slip')) for (const leg of node.legs) if (leg.inLink) g.apply({ type: 'setChannelisedRight', nodeId: id, leg: leg.leg, on: true });
     g.apply({ type: 'setControl', nodeId: id, control: 'signal' });
     const noprot = process.argv.includes('--noprot');
     for (const leg of node.legs) {
