@@ -1,0 +1,20 @@
+{
+  "name": "gand-sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless traffic simulation engine for Gand",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "run": "tsx src/cli/run.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "tsx": "^4.20.0",
+    "@types/node": "^22.0.0"
+  }
+}

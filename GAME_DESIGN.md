@@ -1,6 +1,6 @@
 # Gand — Game Design Document
 
-> Working title. A minimalist traffic-engineering game in the spirit of *Mini Motorways*, except you never draw the road network. The city is already built. You are the traffic engineer: you design intersections, assign lanes, time signals, and keep everything flowing as demand grows.
+> Working title. A minimalist traffic-engineering game in the spirit of *Mini Motorways*, except you never draw the road network. The city is already built. You are the traffic engineer: you design intersections, assign lanes, set storage lengths, time signals, manage driveways and curbs, and keep **people** moving as demand grows.
 
 ---
 
@@ -12,11 +12,11 @@
 
 **Core loop (30–90 seconds):**
 1. Watch traffic. Spot a queue forming.
-2. Diagnose *why* (bad signal phase, missing turn lane, cross-traffic conflict, downstream blockage).
-3. Open the intersection or road segment and redesign it.
+2. Diagnose *why* with the instruments (turning counts, v/c, O-D highlight, time-space diagram).
+3. Open the intersection or segment, draft a redesign, preview it, commit.
 4. Watch the queue drain — or discover you pushed the jam one block downstream.
 
-**Win/lose:** Survive as long as possible. The city grows, demand rises, and the game ends when any single intersection stays gridlocked for too long.
+**Win/lose:** Endless mode: survive as long as possible; the game ends when the gridlock meter fills. Scenario mode: hit a target within a fixed window.
 
 ---
 
@@ -24,11 +24,12 @@
 
 | Mini Motorways | Gand |
 |---|---|
-| You draw roads between houses and destinations | Roads already exist; you can't add or remove them |
-| Upgrades are coarse (roundabout, traffic light, motorway) | Intersections are fully designable: lanes, turn permissions, signal phases, timing |
-| Traffic is abstracted; cars pathfind simply | Traffic is lane-aware: cars queue in the lane that matches their turn, merge, block boxes, run yellows |
+| You draw roads between houses and destinations | Road alignments are fixed; you can't add or remove roads |
+| Upgrades are coarse (roundabout, traffic light, motorway) | Intersections are fully designable: lanes, pocket lengths, phases, timings, ped treatment, geometry |
+| Traffic is abstracted | Traffic is lane-aware: cars queue in the lane that matches their turn, pockets overflow, boxes get blocked, buses stop in-lane |
+| Cars are the unit | **People** are the unit: a full bus outscores 30 single-occupant cars |
 | Failure = a destination's queue overflows | Failure = an intersection gridlocks (spillback + cross-blocking) |
-| Pressure comes from new houses spawning | Pressure comes from demand growth, events, and newly opened trip generators you can't refuse |
+| Pressure comes from new houses spawning | Pressure comes from demand growth, tidal peaks, events, incidents and new generators you can't refuse |
 
 The ownership is clear: **topology is given, flow is yours.**
 
@@ -38,169 +39,302 @@ The ownership is clear: **topology is given, flow is yours.**
 
 ### 3.1 The Map
 
-- A grid-ish city on a fixed canvas. Roads are pre-laid and their *alignment* never changes — no new roads, no removed roads.
-- **Starting widths:** nearly every road starts as **1+1** (one lane each way). One or two **arterials start pre-widened at 2+2** so the lane-assignment puzzle is visible from day one and the player immediately wants it elsewhere. All other widening is earned (see §3.7).
-- **Trip generators** (houses, offices, shops, a stadium, a school) spawn trips between each other on a schedule. Demand grows over time and new generators activate as the city "grows."
-- **Intersections** are the editable unit. Every point where two or more roads meet is one. **All start uncontrolled** with all turns permitted. The first jam at an uncontrolled 4-way *is* the tutorial.
-- **Road segments** between intersections are also editable: lane allocation is always free; adding lanes costs lane-km (§3.7).
+- A grid-ish city on a fixed canvas. Roads are pre-laid and their *alignment* never changes.
+- **Starting widths:** nearly every road starts as **1+1**. One or two **arterials start pre-widened at 2+2** so the lane-assignment puzzle is visible from day one. All other widening is earned (§3.9).
+- **Block length** is a fixed property of each segment and matters constantly: it caps turn-pocket storage, bounds queue storage between signals, and governs how fast spillback reaches the upstream node.
+- **Trip generators** (houses, offices, shops, a stadium, a school, a hospital) connect to the network through **driveways** (§3.5). They spawn trips between each other on a schedule, measured in **people**, not vehicles.
+- **Intersections** are the primary editable unit. **All start uncontrolled** with all turns permitted. The first jam at an uncontrolled 4-way *is* the tutorial.
+- **Road segments** are the second editable unit (§3.4).
+- **Curbs** are the third (§3.6).
 
-### 3.2 Cars
+### 3.2 Vehicles and People
 
-Each car:
-- Has an origin, destination, and a precomputed route (recomputed when you change turn permissions).
-- Chooses a lane on approach based on its upcoming turn. If the correct lane is full, it queues behind it in the adjacent lane and blocks that lane too (this is the primary way jams propagate).
-- Obeys signals, stop signs, and yield rules. Follows gap-acceptance for unprotected turns (left across oncoming, right-on-red if enabled).
-- **Won't enter an intersection it can't clear** — unless the player has disabled "box protection" at that node. Box blocking is the thing that turns a slow intersection into a gridlocked one.
-- Has a patience meter. Low patience → more aggressive gap acceptance, runs yellows. Visually: cars flicker/turn red before they count toward the failure meter.
+| Vehicle | People | Length | Accel | Notes |
+|---|---|---|---|---|
+| Car | 1–2 (avg 1.3) | 4.5 m | normal | The bulk of traffic |
+| Bus | 0–60 by load | 12 m | slow | Follows a fixed route; stops at stops; eligible for signal priority |
+| Truck | 1 | 16 m | very slow | Needs large turn radius; some turns impossible without corner geometry |
+| Emergency | 1 | 6 m | fast | Rare; triggers signal pre-emption; stuck = heavy score hit |
 
-### 3.3 Intersection Editor (the game)
+Every vehicle:
+- Has an origin driveway, destination driveway, and a precomputed route; re-routes periodically on observed travel times (§3.7).
+- Chooses a lane one segment ahead based on its next turn. If that lane is full it **queues behind the lane in the adjacent lane and blocks it** — the primary jam-propagation mechanism.
+- Obeys control (signals, stops, yields, priority rules), gap-acceptance for unprotected movements, right-on-red where enabled.
+- **Won't enter an intersection it can't clear** (box protection) unless the player disables it per node. Box blocking is what turns slow into gridlocked.
+- Has a **patience** meter. Low patience → aggressive gap acceptance, yellow running, and a small chance of ignoring a turn restriction. Patience exhaustion feeds the gridlock meter.
+- **Compliance** is < 100%: a slice of drivers ignore new turn restrictions for the first in-game day after a change.
 
-Click an intersection to open the editor. It's a top-down close-up of just that node with its four (or three) approaches.
+### 3.3 Intersection Editor
 
-**Per approach, per lane:**
-- Turn permission: Left / Through / Right / any combination (e.g. a shared Through+Right lane).
-- Lane count on the approach is fixed by the road's width, but within a short "approach taper" you may **reallocate** — a 2-lane road can become 3 narrow lanes at the stop line (a dedicated turn pocket), at the cost of lane capacity (narrow lanes → lower saturation flow).
+Click an intersection to open the editor: a top-down close-up of just that node with its approaches. The simulation keeps running at half speed while editing (or paused, in draft mode — §3.11).
 
-**Control type (per intersection):**
+#### 3.3.1 Lanes and geometry
+
+Per approach:
+- **Turn permission per lane**: Left / Through / Right / U-turn in any combination (shared Through+Right etc.). The game greys out combinations that create unresolvable conflicts.
+- **Turn pockets** (left or right): carved from the approach. Two parameters:
+  - **Storage length** (slider, metres, capped by block length minus taper). *Too short and the pocket overflows into the through lane; the through lane is now a left lane.* This is the single most common real-world failure and the game's best teachable moment. Pocket storage costs lane-km (§3.9).
+  - **Source**: narrow the existing lanes (free, −10% saturation flow per narrowed lane) or take width from the median / parking (if present).
+- **Lane drop placement** (when the downstream segment has fewer lanes): drop *after* the node (through lanes continue, merge happens downstream) or *before* (merge upstream of the queue). Zipper vs. taper merge style.
+- **Right-turn channelisation**: a slip lane with a pedestrian island. Moves the right-turn/ped conflict out of the signal, frees phase time, costs footprint.
+- **Median**: open (lefts allowed), closed (no lefts — forces U-turns downstream), or **median U-turn crossover** (the Michigan-left building block).
+- **Corner radius**: tight (compact, trucks can't turn right), standard, or wide (trucks fine, pedestrians cross further).
+
+#### 3.3.2 Control type
+
 | Type | Behaviour | Unlock |
 |---|---|---|
-| Uncontrolled | First-come, right-hand priority. Fine at low volume, chaos above. | Start |
-| Two-way stop / Yield | Minor road stops, major flows freely. | Start |
+| Uncontrolled | Right-hand priority, gap acceptance. Fine at low volume. | Start |
+| Two-way stop / Yield | Minor approaches stop or yield; major flows freely. | Start |
 | All-way stop | Everyone stops. Fair, slow, capped throughput. | Start |
-| Signal | Phases, timings, protected/permitted turns. The main tool. | Early |
-| Roundabout | Replaces the node. Great for balanced flows, terrible when one approach dominates. Takes a one-way footprint cost. | Mid |
-| Grade separation (overpass) | Removes one conflict entirely. Very expensive, limited count. | Late / rare |
+| Signal | Full phase design (§3.3.3). The main tool. | Early |
+| Roundabout | Replaces the node. Excellent for balanced flows, poor when one approach dominates. Structure token. | Mid |
+| Innovative forms | MUT, RCUT, CFI, DDI (§3.3.5). Structure tokens. | Late |
+| Interchange | Grade separation with ramps (§3.3.6). Expensive. | Late |
 
-**Signal design UI:**
-- A **phase ring**: add phases, drag to reorder, assign movements (arrows) to each phase. The game greys out conflicting movements so you can't make an illegal phase.
-- Per phase: green time (slider), yellow and all-red are auto-computed from approach speed.
-- Toggle per movement: **Protected** (own arrow), **Permitted** (yield on green ball), **Protected+Permitted**.
-- Toggle per approach: **Right on red**.
-- Toggle per intersection: **Actuated mode** (phases skip if no demand, extend up to a max if queue remains) — unlocks mid-game.
-- **Coordination:** when two signals are on the same corridor, a cable icon lets you link them and set an offset. Getting a green wave on the arterial is the single most satisfying thing in the game.
+#### 3.3.3 Signal design
 
-**Live feedback inside the editor:**
-- The simulation keeps running (at half speed) while you edit, so you see the effect immediately.
-- A per-movement bar shows **demand vs. capacity** for the current design. Red bars are the ones that will queue.
-- A ghost queue preview shows how far back each lane's queue will reach at saturation.
+- **Phase ring**: add phases, drag to reorder, assign movements (arrows) to each. Conflicting movements can't share a phase.
+- **Cycle length** (slider, 40–180 s). Longer = more capacity, longer waits, bigger platoons.
+- **Lost time is always visible.** Each phase change costs yellow + all-red (computed from approach speed, ~4–6 s). The editor shows: *Cycle 90 s · Phases 4 · Lost 18 s · Efficiency 80%.* More phases = less green. This is the central signal trade-off and it is never hidden.
+- **Splits**: green time per phase. Auto-balance button sets splits proportional to critical-lane volume (and shows you the v/c result).
+- **Left-turn treatment** per approach: Protected / Permitted / Protected+Permitted / Split phasing. **Leading vs lagging** left.
+- **Right on red** per approach.
+- **Overlaps**: a right turn can run during the compatible left from the cross street.
+- **Pedestrian treatment** (§3.3.4) — imposes minimum phase lengths.
+- **Actuation** (unlock): phases are skipped with no demand and extended up to a max while a detector sees vehicles. Detectors are placed by the player:
+  - **Stop-bar detector**: calls the phase; basic.
+  - **Advance detector** (placed 60–120 m back): extends green for arriving platoons and protects the **dilemma zone** (reduces red-light running and crashes).
+- **Coordination** (unlock): link signals on a corridor, set a shared cycle and an **offset** per signal. The **time-space diagram** (§3.10) draws the green band.
+- **Metering** (unlock): deliberately shorten an upstream green so the queue forms where there is storage instead of at a critical node that would cross-block. The ugly twin of coordination.
+- **Transit signal priority** (unlock): an approaching bus can extend green or truncate the opposing red by up to N seconds, once per cycle.
+- **Emergency pre-emption**: automatic; drops to the emergency vehicle's movement, then recovers. Causes a short-term mess.
+
+#### 3.3.4 Pedestrians
+
+- Every intersection has crosswalks on each approach (removable, at a walkability penalty that reduces nearby generator demand slightly).
+- A crosswalk imposes a **minimum phase length** on the parallel vehicle phase: walk + clearance = crossing distance / 1.2 m/s. Wide roads mean long minimum phases on the cross street whether or not any cars want them. Narrowing the crossing (islands, curb extensions) shortens it.
+- Pedestrians conflict with turning vehicles. Options:
+  - **Concurrent** (default): turns yield to peds in the crosswalk. Cheap, but turn capacity collapses with heavy ped volume.
+  - **Leading pedestrian interval**: peds get 3–7 s head start. Safer; costs green.
+  - **Exclusive ped phase / scramble**: all vehicles stop; peds cross any direction. Great for ped-heavy nodes, expensive in lost time.
+  - **Channelised right with island** (§3.3.1): moves the conflict out of the signal.
+- **Mid-block crossings**: placeable on segments. Unsignalised (vehicles yield, friction) or signalised (actuated by ped demand).
+- Pedestrian demand comes from generators and from **bus stops** — a busy stop produces a crossing surge after each bus.
+
+#### 3.3.5 Innovative intersection forms
+
+Each eliminates a conflict in a different way, with a different footprint. Unlocked progressively; each costs structure tokens.
+
+| Form | What it does | Needs | Weakness |
+|---|---|---|---|
+| **Median U-turn (MUT)** | Removes all lefts from the main node; lefts become through → U-turn downstream → right. Two-phase main signal. | Wide median on arterial, crossover storage | Extra travel for left-turners; crossover capacity |
+| **RCUT / Superstreet** | Minor-street through and left are eliminated; minor traffic turns right, U-turns, comes back. Main street signals run independently in each direction. | Median, two U-turn crossovers | Minor street delay; counterintuitive |
+| **Continuous Flow Intersection (CFI)** | Lefts cross the oncoming lanes at a secondary signal *before* the main node, so they run concurrently with through traffic. | Footprint for displaced left lanes | Complex, coordination-sensitive |
+| **Diverging Diamond (DDI)** | At an interchange, crossing traffic to the left side between ramp terminals makes all ramp movements free. | Interchange | Pedestrian path is in the middle; driver confusion |
+| **Roundabout** (single/double lane) | Yield-on-entry; eliminates left-turn conflicts and most severe crash types. | Footprint | Dominant approach starves others; peds; two-lane lane-choice confusion |
+
+#### 3.3.6 Interchanges
+
+Grade separation is never "just an overpass" — it's an interchange with ramps, and ramps have merge/diverge problems. Forms: **Diamond**, **SPUI** (single-point), **DDI**, **Partial cloverleaf**. Each has ramp terminals that are themselves editable intersections, and ramp lengths that bound merge storage. Cost: 3 structure tokens + lane-km for ramps. Limit 2 per city.
 
 ### 3.4 Road Segment Editor
 
-Click a road segment between two intersections:
-- **Widen**: add one lane in one direction. Costs lane-km (§3.7) and closes a lane for one in-game day during construction. Removing a lane refunds 100%.
-- Reallocate lanes (free): e.g. convert a 2+2 road into a 3+1 (tidal flow) or a 1+1 with a center turn lane.
-- **One-way** conversion: both lanes go one direction. Cars reroute. Huge capacity gain on that corridor, huge headache for anything that used to go the other way.
-- Add **turn restrictions** mid-block (no left into that driveway).
-- Set **speed** (affects yellow timing, saturation flow, and how fast spillback happens).
+Click a segment between two intersections:
+- **Widen**: add one lane in one direction. Costs lane-km (§3.9), one in-game day of construction with a lane closed. Removing a lane refunds 100%.
+- **Reallocate** (free): e.g. 2+2 → 3+1 (tidal flow), 1+1 + centre turn lane (TWLTL), bus lane, bike lane.
+- **One-way** conversion (structure token, not refunded). Cars reroute. Big capacity gain on that corridor, big headache for everyone who used the other direction.
+- **Mid-block turn restrictions** (free): e.g. no left into a driveway.
+- **Lane drop / merge** style (§3.3.1).
+- **Design speed**: tied to lane width and parking presence rather than a free knob. Narrow lanes + parking = slow street: lower saturation flow, but shorter yellow, smaller dilemma zone, lower crash severity, and a ped-friendly bonus for adjacent generators.
+- **Mid-block crossing** placement (§3.3.4).
+- **Bus stop** placement (§3.8).
 
-### 3.5 Metrics That Matter
+### 3.5 Access Management — Driveways
 
-Shown on a slim HUD:
-- **Flow** — cars completing trips per minute (the score).
-- **Average delay** — seconds per car. Yellow above a threshold, red above another.
-- **Gridlock meter** — fills while any intersection is box-blocked. Empties when cleared. Full = game over.
-- Per-intersection **Level of Service** (A–F) badge when zoomed out, so you can scan for the Fs.
+Trip generators don't spawn traffic from nowhere; they connect via **driveways**, and a strip of driveways on an arterial is what kills it.
 
-### 3.6 Pressure Curve
+Per generator:
+- **Driveway position** along its frontage (drag). Keep it away from the intersection's functional area or it conflicts with the turn pocket.
+- **Consolidate**: two adjacent generators share one driveway (free, requires both frontages).
+- **Right-in / right-out only** (free): the median closes across the driveway; left-in/left-out traffic U-turns downstream.
+- **Relocate to the side street** (costs lane-km for the connector).
+- **Frontage road** (structure token): one access point for several generators.
+- **Driveway throat length**: short throats back up into the street when the parking lot is slow (the stadium, the school at 3 pm).
 
-Difficulty comes from demand, not from new topology:
-- **Steady growth:** trips/min increases every in-game day.
-- **Peaks:** AM and PM rush create directional surges (tidal flow matters).
-- **Events:** the stadium empties all at once; a school zone drops speed at 3pm; a road segment closes for a week of "roadworks" and you must reroute around it with turn restrictions and one-ways.
-- **New generators:** a mall opens on an already-strained corridor. You can't say no.
+Driveway density per segment feeds the **conflict count** (§3.9.3) and friction on the through lanes.
 
-### 3.7 Resources
+### 3.6 Curb Management
 
-No money. Like *Mini Motorways*, pressure comes from scarcity of a **physical** resource you receive on a weekly cadence, not from a currency you grind. Difficulty is tunable with one number (weekly lane-km).
+On 1+1 and 2+2 streets the curb is where the spare capacity hides.
+- **On-street parking** (default on most locals): eats effective width, adds friction from cars pulling in/out. Removing it gives a lane. Doing so lowers nearby shop demand a little (a soft push-back).
+- **Peak-hour parking ban** (free, reversible): the curb is a travel lane 7–9 am and 4–6 pm, parking otherwise. The cheap tidal lane.
+- **Loading zones**: without one, delivery trucks **double-park** in a travel lane for 2–5 minutes. With one, they don't.
+- **Bus bays vs curbside stops** (§3.8).
+- **Curb extensions** (bulb-outs): shorten the ped crossing (shorter minimum phases), kill a parking space, slow turning vehicles.
+
+### 3.7 Routing and Driver Behaviour
+
+- **Time-dependent shortest path** on the segment graph using recent observed travel times (exponentially smoothed). A fraction of vehicles re-route every N seconds, so one-ways and restrictions actually divert traffic and the network self-balances.
+- **Perceived cost** includes a penalty per stop and a small penalty for unprotected lefts — drivers avoid them, which is why your beautifully protected left is empty and the next block's unprotected one is jammed.
+- **Variable message signs** (unlock): a placeable sign at a decision point that shifts a share of route choice toward an alternative. Soft tool, cheap, imperfect compliance.
+- **Lane utilisation imbalance**: drivers favour the lane that continues straight downstream; the lane that drops is under-used until it's forced.
+- **Shockwaves**: stop-and-go propagates upstream in a saturated lane; visible as a moving wave of brake lights.
+
+### 3.8 Transit
+
+- Two or three **bus routes** are fixed per city (like roads, you don't draw them). You control everything about how they move.
+- **Stops**: curbside (bus blocks the lane for dwell time — 15–40 s) or **bus bay** (pulls out of traffic; costs curb, bus takes longer to re-merge). Near-side vs far-side of the intersection: far-side plays better with signal priority.
+- **Bus lane** (lane reallocation): removes a car lane, moves more people if the bus is full. Cars can enter it to turn right unless you make it a protected lane.
+- **Queue jump**: a short bus-only lane plus an early green at the stop line.
+- **Transit signal priority** (§3.3.3).
+- Buses carry people, and **people are the score**, so a route that moves 600 people an hour justifies a lot of car delay — and a nearly-empty bus doesn't.
+
+### 3.9 Resources, Construction and Risk
+
+#### 3.9.1 No money
+Like *Mini Motorways*, pressure comes from scarcity of a **physical** resource on a weekly cadence. Difficulty is one number: weekly lane-km.
 
 **Always free and instant** — the iterate-watch-iterate loop is never gated:
-- Signal timing, phases, protected/permitted settings, right-on-red, actuation, coordination offsets.
-- Turn permissions per lane.
-- Control type among uncontrolled / yield / stop / all-way stop / signal.
-- Lane *reallocation* within a segment's existing width (tidal flow, center turn lane).
-- Stop-line turn pockets carved from the approach taper (narrower lanes = lower saturation flow; that's the cost).
+signal timing, phases, splits, cycle, left-turn treatment, right-on-red, actuation settings, detector placement, offsets, metering, TSP; turn permissions; control type among uncontrolled / yield / stop / AWSC / signal; lane reallocation within existing width; stop-line pocket *narrowing*; parking bans; driveway right-in/right-out; mid-block turn restrictions; ped treatment choices.
 
 **Two spendable resources:**
 
 | Resource | Spent on | Earned | Refund |
 |---|---|---|---|
-| **Lane-km** | Widening a segment by one lane in one direction. A 300 m segment costs 0.3 lane-km. | Fixed allotment every in-game week. One-time bonus when a new trip generator opens ("the mall paid for its own access"). | 100% when a lane is removed — experimentation is cheap, *placement* is the constraint. |
-| **Structure tokens** | Roundabout (1), one-way conversion (1), overpass (3). | Each week the player picks **one**: a structure token **or** a bonus lane-km allotment. Never both. | Roundabout and overpass: 100%. One-way conversion: **not refunded** — it's a commitment. |
+| **Lane-km** | Widening (0.1 lane-km per 100 m per lane); pocket storage beyond the taper; driveway relocation connectors; interchange ramps. | Fixed weekly allotment. One-time bonus when a new generator opens. | 100% on removal — experimentation is cheap, *placement* is the constraint. |
+| **Structure tokens** | Roundabout (1), one-way conversion (1), MUT/RCUT (1), CFI (2), frontage road (1), interchange (3). | Weekly choice: **one token or a bonus lane-km allotment**, never both. | Roundabout/MUT/RCUT/CFI/interchange: 100%. One-way and frontage road: not refunded. |
 
-**Disruption cost:** widening, roundabouts and overpasses close a lane at that location for one in-game day while under construction. You can't fix a rush-hour jam by widening *during* rush hour — you either planned it last night, or you fix it with signals right now. This keeps the free tools relevant in the late game.
+#### 3.9.2 Construction and disruption
+Widening, pockets, roundabouts, innovative forms and interchanges close a lane at that location for one in-game day. You cannot widen your way out of a jam *during* rush hour — you either planned it last night or you fix it now with the free tools. This keeps signals relevant late.
 
-**Why this shape:**
-- Lane-km is spent on *corridors*, so the real decision is "which corridor is the bottleneck this week?" Triage, not shopping.
-- The weekly token-or-lanes choice is Mini Motorways' "roundabout or motorway" beat with higher stakes.
-- Full refunds mean a wrong widening is a lost day, not a lost run.
+#### 3.9.3 Safety and incidents
+Every node and segment has a **conflict score**: unprotected lefts × volume, speed differential at merges, driveway density, dilemma-zone exposure, ped-vehicle conflicts. Conflict score sets the **crash probability** per hour.
 
-**Score** is total completed trips, weighted down by average delay (so a high-volume gridlock-adjacent city scores below a smaller smooth one). Optional **daily challenge**: fixed seed, fixed map, fixed weekly allotment, 10 in-game days, leaderboard.
+A crash blocks a lane (or the whole intersection for a severe one) for 10–40 minutes. Roundabouts and protected lefts reduce severe crashes; high design speed and short yellows increase them. **Safety is not a separate score — it is a flow concern.** The instruments show conflict score per node so you can see where the next crash will be.
+
+Other incidents: **signal malfunction** (node drops to flashing red = all-way stop until you click it), **stalled vehicle**, **double-parked truck** (no loading zone), **rain** (−10% saturation flow city-wide for a few hours).
+
+### 3.10 Instruments
+
+Engineers spend most of their time looking, not building. The HUD is slim; the instruments are deep.
+
+**Always-on HUD:** People moved / hour · Average person-delay · **Gridlock meter** · Day & week · Lane-km balance · Token count.
+
+**Per node (hover / zoom):** Level of Service A–F badge · conflict score dot.
+
+**Instrument panel (toggleable overlays):**
+- **Turning movement counts**: live demand per arrow at every node.
+- **v/c ratio** per movement; red above 0.9.
+- **Delay heatmap** across the city.
+- **Queue length** overlay with max-queue-this-hour ghost.
+- **Time-space diagram** for a selected corridor: the green band, the platoon trajectories, your offsets. *The* coordination tool.
+- **O-D highlight**: click any jammed movement; the map lights up where those vehicles came from and where they're going. Half the time the answer to "why is this left jammed" is a shortcut three blocks away.
+- **Conflict overlay**: crash risk per node/segment.
+- **Transit overlay**: bus positions, load, schedule adherence.
+- **Pedestrian overlay**: crossing volumes and ped delay.
+- **History graphs**: any metric vs time for the last 3 days.
+
+### 3.11 Draft Mode
+
+Open an editor → **Draft**. The sim pauses. Make any number of edits (even across several nodes). **Preview** runs a 5-minute headless simulation of the current traffic with the draft applied and shows the predicted change in delay, v/c and queue per movement. **Commit** or **Discard**. Removes the frustration of making a bad change during rush hour, and lets you tune a corridor's offsets as a set.
+
+### 3.12 Pressure Curve
+
+Difficulty comes from demand and chance, not from new topology.
+- **Steady growth**: people-trips/hour increase each in-game day.
+- **Tidal peaks**: AM inbound, PM outbound. Tidal flow and peak-hour parking bans matter.
+- **Events**: stadium lets out (10,000 people in 30 min); school at 3 pm (speed zone + ped surge + parent pick-up double-parking); roadworks close a segment for a week; a parade closes an arterial for an afternoon; a crash on the highway dumps traffic onto your arterial.
+- **New generators**: a mall opens on an already-strained corridor with a badly placed driveway. You can't say no, but you can fix the driveway.
+- **Incidents** (§3.9.3) scale with your own conflict scores — a safe network is a quieter one.
+
+### 3.13 Score
+
+**People-hours of delay avoided**, i.e. people completing trips weighted by how close to free-flow they travelled. A huge gridlock-adjacent throughput scores below a smaller smooth one. Separate tracked stats (not score, but shown): crashes, worst-approach delay (equity), bus schedule adherence.
 
 ---
 
-## 4. Progression & Unlocks
+## 4. Modes and Progression
 
-Each city is a run. Unlocks persist across runs:
+### 4.1 Modes
+- **Endless**: a city, growing demand, survive. The main mode.
+- **Scenario**: fixed map, a brief, a target, a time window. *"The hospital says ambulances are stuck at 5th & Main. Average delay on 5th < 45 s by Friday."* Scenarios teach one concept each and are the tutorial track.
+- **Daily challenge**: fixed seed and allotment, 10 in-game days, leaderboard on score.
+- **Sandbox**: unlimited resources, any city, for learning and for making corridors you're proud of.
 
-1. **Tutorial city** — 4 intersections, teaches lanes and stop/signal basics.
-2. **First real city** — unlocks protected lefts and right-on-red.
-3. Survive 10 days → **Actuated signals**.
-4. Survive 15 days → **Signal coordination / offsets**.
-5. Survive 20 days → **Roundabouts**.
-6. Survive 30 days → **Overpass** (limit 2 per city).
-7. Milestone-based **new cities** with different topologies: grid, radial, river with 3 bridges, highway-with-exits, old-town irregular.
+### 4.2 Unlocks (persist across runs)
+
+| Milestone | Unlock |
+|---|---|
+| Tutorial scenarios 1–3 | Signals, protected lefts, pocket storage, right-on-red |
+| Scenario 4–6 | Lost time / cycle tuning, ped treatments, curb tools |
+| Endless day 10 | Actuation + detectors, driveway tools |
+| Endless day 15 | Coordination + time-space diagram, metering |
+| Endless day 20 | Roundabouts, bus lanes + TSP, one-way |
+| Endless day 25 | MUT, RCUT, channelised rights, VMS |
+| Endless day 30 | CFI, interchanges (diamond, SPUI) |
+| Endless day 40 | DDI, frontage roads |
+| Per city milestones | New cities: grid · radial · river with 3 bridges · highway-with-exits · old-town irregular |
 
 ---
 
 ## 5. Art, Feel, Audio
 
-- **Visual:** flat, minimalist, high contrast. Roads are mid-grey ribbons; lane markings are crisp white; cars are small saturated rectangles colored by destination type. Signals are visible as tiny colored dots at stop lines when zoomed in, and as a phase indicator ring when zoomed out.
-- **Readability over realism.** Queue length should be legible at a glance. Box-blocked intersections pulse.
-- **Camera:** smooth zoom from whole-city to single-intersection. Editor is a modal zoom, not a separate screen.
-- **Audio:** ambient lo-fi; subtle ticks as signal phases change; a soft chord when a queue drains; a low rumble building as the gridlock meter fills. No horns (too stressful; the metric is stressful enough).
-- **Time control:** pause, 1x, 2x, 4x. Editing is always allowed, including while paused.
+- **Visual:** flat, minimalist, high contrast. Roads are mid-grey ribbons; lane markings crisp white; vehicles are small saturated shapes coloured by destination type; buses are long and obvious. Signals are small coloured dots at the stop line when zoomed in and a phase ring when zoomed out.
+- **Readability over realism.** Queue length legible at a glance. Box-blocked nodes pulse. Pocket overflow shows as a spill of the pocket's colour into the through lane.
+- **Camera:** smooth zoom from whole-city to single node. Editors are modal zooms, not screens.
+- **Audio:** ambient lo-fi; soft ticks on phase changes; a chord when a queue drains; a rumble as the gridlock meter fills; a bus's doors as a gentle rhythm. No horns.
+- **Time control:** pause, 1×, 2×, 4×. Editing is always allowed, including while paused.
 
 ---
 
 ## 6. Technical Notes
 
 ### 6.1 Simulation model
-- **Discrete lanes, continuous position.** Each lane is a 1D track; cars are points with length and velocity along it. Car-following via a simple IDM (Intelligent Driver Model) or Krauss model — cheap and gives realistic shockwaves.
-- **Intersections as conflict matrices.** Each movement (approach × turn) has a set of conflicting movements. Signals grant right-of-way to sets of non-conflicting movements. Uncontrolled nodes resolve via priority rules + gap acceptance.
-- **Lane choice** is decided one segment ahead using the route's next turn; lane changes are allowed only in the taper zone and only if a gap exists — otherwise the car waits and blocks.
-- **Routing:** time-dependent Dijkstra on the segment graph using recent observed travel times. Re-route a fraction of cars every N seconds so the network self-balances (and so a one-way conversion actually diverts traffic).
-- **Spillback:** a lane's entry is closed when its storage is full; this is what propagates queues upstream and causes box-blocking.
+- **Discrete lanes, continuous position.** Each lane is a 1D track; vehicles are points with length and velocity. Car-following via IDM — cheap, produces realistic shockwaves. Vehicle classes differ in length, acceleration, desired speed and turn radius.
+- **Pockets are lanes** with a start offset; a vehicle enters a pocket from the adjacent lane in the taper zone if there is a gap and room; otherwise it waits in the adjacent lane and blocks it.
+- **Intersections as conflict matrices.** Each movement (approach × lane × turn) has a conflict set. Control grants right-of-way to non-conflicting sets. Uncontrolled nodes resolve by priority + gap acceptance. Pedestrians are movements too, with their own conflict sets.
+- **Signal controller** is a ring-barrier controller: phases, splits, min/max green from ped clearance and settings, yellow/all-red from approach speed, actuation via detector zones, coordination via a master clock and offsets, TSP and pre-emption as controlled interrupts.
+- **Innovative forms** are node transforms: a MUT replaces one node with a 2-phase node plus two crossover nodes and re-routes left movements; the rest of the sim is unchanged.
+- **Routing:** time-dependent Dijkstra on the lane-group graph with smoothed observed travel times, stop penalties and unprotected-left penalties; staggered periodic re-routing of a fraction of vehicles.
+- **Spillback:** a lane's entry closes when storage is full; this propagates queues and causes box blocking.
+- **Incidents** are lane blockers with a timer, spawned from per-node conflict score × exposure.
+- **Draft/preview** forks the sim state, runs N minutes headless, diffs metrics.
+- **Everything is deterministic** given a seed and an ordered command log. Save = seed + commands. Replays and daily challenges fall out for free.
 
 ### 6.2 Tick budget
-- Target 500–2000 cars at 60 fps in a browser. Fixed 10 Hz physics step, interpolated rendering. Spatial sort per lane makes car-following O(n).
+Target 500–2000 vehicles at 60 fps in a browser. Fixed 10 Hz physics step, interpolated rendering. Per-lane sorted arrays make car-following O(n).
 
-### 6.3 Stack (suggested)
-- TypeScript + HTML canvas (or PixiJS) for rendering. Sim is pure TS with no DOM dependency so it can be unit-tested and run headless for balancing.
-- Deterministic seeded RNG for daily challenges and replays.
-- Save = seed + ordered list of player edits (tiny; replayable).
+### 6.3 Stack
+- TypeScript. **The sim has no DOM dependency**: it is unit-testable and runs headless for balancing, previews and CI.
+- Renderer (later): canvas or PixiJS, reads sim state read-only.
+- Vitest for tests. Seeded RNG. Command pattern for all player edits.
 
 ---
 
 ## 7. MVP Scope (first playable)
 
 **In:**
-- One hand-made grid map, ~9 intersections. All roads 1+1 except one 2+2 arterial.
-- Weekly lane-km allotment and segment widening with 1-day construction. No structure tokens yet.
-- Cars with lane-aware queuing, box-blocking, and spillback.
-- Intersection editor: lane turn assignment, stop/yield/all-way stop, fixed-time signals with phase ring, protected/permitted lefts.
-- Demand growth + AM/PM peak.
-- Flow / delay / gridlock HUD; game over.
+- One hand-made grid map, ~9 intersections. All roads 1+1 except one 2+2 arterial. Driveways on every generator.
+- Cars and one bus route, lane-aware queuing, pockets with storage length and overflow, spillback, box blocking.
+- Intersection editor: lane turn assignment; pocket storage; uncontrolled / stop / yield / AWSC / fixed-time signals with phase ring, cycle, visible lost time, protected/permitted/split lefts, right-on-red; concurrent ped crossings with minimum phase lengths.
+- Segment editor: widen, reallocate, peak-hour parking ban, bus stop curbside/bay.
+- Driveway: move, right-in/right-out.
+- Routing with re-routing; demand growth with AM/PM peaks.
+- Weekly lane-km, construction day, 100% refunds. No tokens yet.
+- Instruments: TMC, v/c, queue overlay, O-D highlight, draft/preview.
+- People-based score, delay, gridlock meter, game over.
 
-**Out (post-MVP):**
-- Roundabouts, overpasses, one-way conversion, actuated signals, coordination, events, multiple cities, daily challenge, audio.
+**Out (post-MVP):** roundabouts, innovative forms, interchanges, actuation, coordination/time-space, metering, TSP, incidents, curb beyond parking ban, VMS, events, scenarios beyond the tutorial, audio.
 
-**MVP success test:** a player with no traffic engineering background can look at a jammed intersection, guess "it needs a left-turn lane and a protected left phase", do it in under 20 seconds, and *see* the queue drain.
+**MVP success test:** a player with no traffic engineering background can look at a jammed intersection, read the TMC and v/c, guess "the left pocket is too short and it needs a protected phase", fix it in under 30 seconds, and *see* the queue drain.
 
 ---
 
 ## 8. Open Questions
 
-- Should cars ever be allowed to U-turn or pick a different destination when delayed too long? (Pro: realism and self-healing. Con: hides your mistakes.)
-- Pedestrian phases: a real signal constraint, and a nice late-game complexity — or just noise?
-- Weekly lane-km allotment: should it scale with city size, or stay flat so the late game is genuinely starved?
-- Should the week-end token-or-lanes choice be offered as a card pick (Mini Motorways style) or a quiet menu? Card pick is more legible; menu is less interrupting.
+- Weekly lane-km allotment: scale with city size, or stay flat so the late game is genuinely starved?
+- Weekly token-or-lanes choice: card pick (legible, interrupting) or quiet menu?
+- Should pedestrians be a separate score component or stay purely a constraint + conflict source?
+- How much driver non-compliance is fun vs. infuriating? Start at 5% for one day after a change.
+- Should crashes be visible as a "could have been avoided" post-mortem (shows the conflict that caused it)? Probably yes — it's a teaching moment.
