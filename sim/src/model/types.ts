@@ -190,6 +190,13 @@ export interface Road {
   /** Centre turn lane counts toward widthLanes. */
   points: Point[]; // polyline a→b
   crossovers: Crossover[];
+  /** Grade in percent, uphill from a to b. */
+  grade: number;
+  /** Horizontal curvature 0..1. */
+  curvature: number;
+  /** Frontage sets widening cost (land) and the right-of-way cap. */
+  frontage: 'open' | 'built' | 'parkland' | 'water';
+  maxWidth: number;
 }
 
 // ───────────────────────────── control ─────────────────────────────
@@ -236,8 +243,13 @@ export interface SignalPlan {
   /** Transit signal priority. */
   tsp: boolean;
   tspMaxExtend: number;
-  /** Leading (default) vs lagging lefts, informational for the auto-builder; phase order encodes it. */
+  /** Leading (default) vs lagging lefts, node-wide fallback; per-approach `leftLead` wins. */
   laggingLeft: boolean;
+  /** Per approach: lead or lag its protected left (lead one side, lag the other to widen a progression band). */
+  leftLead: Record<LinkId, 'lead' | 'lag'>;
+  /** Clearance adjustments in seconds relative to the kinematic values. Shorter buys green, costs safety. */
+  yellowAdjust: number;
+  allRedAdjust: number;
 }
 
 export interface SignalRuntime {
@@ -334,6 +346,8 @@ export interface SimNode {
   vms: Vms | null;
   /** Node radius (half of the intersection box) for geometry. */
   radius: number;
+  /** Worst leg deviation from a right angle, degrees. Skew lengthens clearance paths and hurts sight. */
+  skew: number;
   /** For crossover/terminal nodes: the parent node id of the transform. */
   parent?: NodeId;
   /** Conflict overrides (CFI/DDI): pairs that no longer conflict. */

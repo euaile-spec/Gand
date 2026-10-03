@@ -22,6 +22,8 @@ import {
   setBusStopKind,
   setLaneType,
   setSlipLane,
+  frontageMultiplier,
+  realignOffset,
   setMedian,
   setOneWay,
   setParking,
@@ -46,6 +48,9 @@ export type Command =
   | { type: 'setOneWay'; roadId: string; mode: 'none' | 'fwd' | 'bwd' }
   | { type: 'setMergeStyle'; linkId: LinkId; style: 'taper' | 'zipper' }
   | { type: 'repave'; roadId: string }
+  | { type: 'realignOffset'; roadId: string }
+  | { type: 'setClearance'; nodeId: NodeId; yellowAdjust: number; allRedAdjust: number }
+  | { type: 'setLeftLead'; nodeId: NodeId; linkId: LinkId; lead: 'lead' | 'lag' }
   | { type: 'setNoLeftIntoDriveways'; linkId: LinkId; on: boolean }
   // node geometry
   | { type: 'setLaneDrop'; nodeId: NodeId; leg: number; mode: 'after' | 'before' }
@@ -170,11 +175,12 @@ function dispatch(world: World, cmd: Command): Result {
       const link = world.links[cmd.dir === 'fwd' ? `${road.id}>` : `${road.id}<`];
       if (!link) return fail('No such direction');
       if (link.constructionUntil > world.t) return fail('Already under construction');
-      const km = laneKmCostForLength(road.length);
-      if (!canAffordLaneKm(world, km)) return fail(`Needs ${km.toFixed(2)} lane-km`);
+      if (road.widthLanes >= road.maxWidth) return fail(`No right-of-way left on ${road.id} (${road.frontage} frontage, max ${road.maxWidth} lane units)`);
+      const km = laneKmCostForLength(road.length) * frontageMultiplier(road);
+      if (!canAffordLaneKm(world, km)) return fail(`Needs ${km.toFixed(2)} lane-km (${road.frontage} frontage ×${frontageMultiplier(road)})`);
       spendLaneKm(world, km);
       const general = generalLanes(link);
-      scheduleConstruction(world, { kind: 'widen', linkId: link.id, nodeId: null, laneId: general.length > 1 ? general[general.length - 1].id : null, payload: { roadId: road.id, dir: cmd.dir } });
+      scheduleConstruction(world, { kind: 'widen', linkId: link.id, nodeId: null, laneId: general.length > 1 ? general[general.length - 1].id : null, payload: { roadId: road.id, dir: cmd.dir, km } });
       if (general.length <= 1) link.speedLimit = link.designSpeed * 0.6;
       return ok;
     }
@@ -182,7 +188,7 @@ function dispatch(world: World, cmd: Command): Result {
       const road = world.roads[cmd.roadId];
       if (!road) return fail('No such road');
       const r = removeLane(world, road, cmd.dir);
-      if (r.ok) refundLaneKm(world, laneKmCostForLength(road.length));
+      if (r.ok) refundLaneKm(world, laneKmCostForLength(road.length) * frontageMultiplier(road));
       return r;
     }
     case 'setPocket': {
@@ -236,6 +242,35 @@ function dispatch(world: World, cmd: Command): Result {
         return r;
       }
       return setOneWay(world, road, cmd.mode);
+    }
+    case 'realignOffset': {
+      const road = world.roads[cmd.roadId];
+      if (!road) return fail('No such road');
+      const km = 0.1 * frontageMultiplier(road);
+      if (!canAffordLaneKm(world, km)) return fail(`Needs ${km.toFixed(2)} lane-km (land for the realignment)`);
+      const r = realignOffset(world, road);
+      if (r.ok) spendLaneKm(world, km);
+      return r;
+    }
+    case 'setClearance': {
+      const n = node(world, cmd.nodeId);
+      const r = ensureSignal(world, n);
+      if (!r.ok) return r;
+      if (cmd.yellowAdjust < -1.5 || cmd.yellowAdjust > 2 || cmd.allRedAdjust < -1.5 || cmd.allRedAdjust > 2) return fail('Adjustments must be within −1.5…+2 s');
+      n.control.signal!.yellowAdjust = cmd.yellowAdjust;
+      n.control.signal!.allRedAdjust = cmd.allRedAdjust;
+      normalisePlan(n, world, n.control.signal!);
+      return ok;
+    }
+    case 'setLeftLead': {
+      const n = node(world, cmd.nodeId);
+      const r = ensureSignal(world, n);
+      if (!r.ok) return r;
+      if (!world.links[cmd.linkId]) return fail('No such link');
+      n.control.signal!.leftLead[cmd.linkId] = cmd.lead;
+      n.control.signal = autoPlan(n, world, n.control.signal!);
+      n.control.runtime = emptyRuntime(world.t);
+      return ok;
     }
     case 'repave': {
       const road = world.roads[cmd.roadId];

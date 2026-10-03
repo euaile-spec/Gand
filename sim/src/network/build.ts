@@ -155,6 +155,13 @@ export function refreshNodeLegs(world: World, node: SimNode): void {
     leg.outLink = nodeIsB ? (bwd ? bwd.id : null) : fwd ? fwd.id : null;
   }
   node.radius = nodeRadius(world, node);
+  // Skew: how far the worst leg sits from its right-angle slot (0° = perfect cross).
+  node.skew = 0;
+  for (const leg of node.legs) {
+    const slotDeg = leg.leg * 90 - 90; // slot 0 = north = -90° in screen coords
+    let d = Math.abs((((leg.angle * 180) / Math.PI - slotDeg) % 360 + 540) % 360 - 180);
+    node.skew = Math.max(node.skew, Math.min(d, 60));
+  }
   rebuildNodeMovements(
     node,
     (l) => world.links[l].speedLimit,
@@ -271,7 +278,23 @@ export function createRoad(world: World, rd: MapRoadDef, pts: Point[]): Road {
   const parkingB = rd.parkingBwd ?? 'none';
   const median = rd.median ?? 'none';
   const widthLanes = rd.widthLanes ?? fwdLanes + bwdLanes + (parkingF !== 'none' ? 1 : 0) + (parkingB !== 'none' ? 1 : 0) + (median !== 'none' ? 1 : 0);
-  const road: Road = { id: rd.id, a: rd.a, b: rd.b, length: polylineLength(pts), widthLanes, fwdLanes, bwdLanes, oneWay: rd.oneWay ?? 'none', median, points: pts, crossovers: [] };
+  const road: Road = {
+    id: rd.id,
+    a: rd.a,
+    b: rd.b,
+    length: polylineLength(pts),
+    widthLanes,
+    fwdLanes,
+    bwdLanes,
+    oneWay: rd.oneWay ?? 'none',
+    median,
+    points: pts,
+    crossovers: [],
+    grade: rd.grade ?? 0,
+    curvature: rd.curvature ?? 0,
+    frontage: rd.frontage ?? 'open',
+    maxWidth: rd.maxWidth ?? widthLanes + (rd.frontage === 'water' ? 0 : rd.frontage === 'built' ? 1 : 2),
+  };
   world.roads[road.id] = road;
   if (fwdLanes > 0) createLink(world, road, 'fwd', fwdLanes, parkingF);
   if (bwdLanes > 0) createLink(world, road, 'bwd', bwdLanes, parkingB);
@@ -296,6 +319,7 @@ export function createNode(world: World, id: string, pos: Point): SimNode {
     metrics: emptyNodeMetrics(),
     vms: null,
     radius: 8,
+    skew: 0,
   };
   world.nodes[id] = node;
   recomputeLegs(world, node);
@@ -348,6 +372,7 @@ export function addGenerator(world: World, g: MapGeneratorDef): Generator {
     surgePeople: 0,
   };
   world.generators[gen.id] = gen;
+  if (road.frontage === 'open' && g.kind !== 'external' && g.kind !== 'stadium') road.frontage = 'built';
   const dw: Driveway = {
     generatorId: gen.id,
     linkId: link.id,

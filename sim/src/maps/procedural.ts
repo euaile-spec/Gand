@@ -18,7 +18,7 @@ export interface ProceduralOptions {
 export function proceduralMap(seed: number, opts: ProceduralOptions = {}): MapDef {
   const rng = createRng(seed ^ 0x9e3779b9);
   const cols = opts.cols ?? 3 + nextInt(rng, 3); // 3..5
-  const rows = opts.rows ?? 3 + nextInt(rng, 2); // 3..4
+  const rows = opts.rows ?? 3 + nextInt(rng, 3); // 3..5
   const B = opts.block ?? Math.round(nextRange(rng, 170, 240));
   const nodes: MapNodeDef[] = [];
   const roads: MapRoadDef[] = [];
@@ -48,6 +48,16 @@ export function proceduralMap(seed: number, opts: ProceduralOptions = {}): MapDe
       const p = art ? 'none' : parkingStyle();
       roads.push({ id: `v${r}${c}`, a: `n${r}${c}`, b: `n${r + 1}${c}`, fwdLanes: art ? 2 : 1, bwdLanes: art ? 2 : 1, median: art ? 'open' : 'none', parkingFwd: p, parkingBwd: p });
     }
+  }
+
+  // Terrain: a few graded roads (a hill across one row) and some curved blocks; frontage by zone.
+  const hillRow = chance(rng, 0.5) ? nextInt(rng, rows) : -1;
+  for (const r of roads) {
+    const isV = r.id.startsWith('v');
+    const rr = Number(r.id[1]);
+    if (hillRow >= 0 && isV && (rr === hillRow || rr === hillRow - 1)) r.grade = (rr === hillRow ? 1 : -1) * (3 + nextInt(rng, 5));
+    if (chance(rng, 0.15)) r.curvature = 0.3 + 0.5 * nextRange(rng, 0, 1);
+    r.frontage = chance(rng, 0.2) ? 'parkland' : 'open';
   }
 
   // Gateways on the arterial ends (always) and a few random edge stubs.
@@ -139,6 +149,30 @@ export function proceduralMap(seed: number, opts: ProceduralOptions = {}): MapDe
       generator: { id: `${kind}-dev${k}`, kind, size: 30 + nextInt(rng, 40), roadId, t: 0.8, side: 'fwd' },
     });
     day += 2 + nextInt(rng, 3);
+  }
+
+  // Offset intersections: split one interior non-arterial crossing into two T-junctions 35 m apart.
+  if (chance(rng, 0.6)) {
+    const interiorNodes = nodes.filter((n) => {
+      if (!n.id.startsWith('n')) return false;
+      const r = Number(n.id[1]);
+      const c = Number(n.id[2]);
+      return r > 0 && r < rows - 1 && c > 0 && c < cols - 1 && r !== artRow && c !== artCol;
+    });
+    if (interiorNodes.length) {
+      const n = pick(rng, interiorNodes);
+      const r = Number(n.id[1]);
+      const c = Number(n.id[2]);
+      const twin: MapNodeDef = { id: `${n.id}b`, x: n.x + 35, y: n.y };
+      nodes.push(twin);
+      // The east horizontal and the south vertical move to the twin; a short road joins the pair.
+      const east = roads.find((rd) => rd.id === `h${r}${c}`);
+      const south = roads.find((rd) => rd.id === `v${r}${c}`);
+      if (east) east.a = twin.id;
+      if (south) south.a = twin.id;
+      roads.push({ id: `off${r}${c}`, a: n.id, b: twin.id, frontage: 'built' });
+      for (const g of generators) if (g.roadId === east?.id || g.roadId === south?.id) g.t = Math.max(g.t, 0.4);
+    }
   }
 
   return {

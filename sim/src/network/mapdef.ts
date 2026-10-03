@@ -22,6 +22,14 @@ export interface MapRoadDef {
   oneWay?: 'none' | 'fwd' | 'bwd';
   /** Optional polyline waypoints between a and b. */
   via?: { x: number; y: number }[];
+  /** Longitudinal grade in percent, positive = uphill from a to b. */
+  grade?: number;
+  /** Horizontal curvature 0 (straight) .. 1 (tight), limits sight distance. */
+  curvature?: number;
+  /** What fronts the road: sets the land cost of widening and the width cap. */
+  frontage?: 'open' | 'built' | 'parkland' | 'water';
+  /** Hard cap on physical width in lane units (right-of-way). */
+  maxWidth?: number;
 }
 
 export interface MapGeneratorDef {

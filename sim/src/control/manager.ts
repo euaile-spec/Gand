@@ -92,8 +92,17 @@ function conflictingOccupant(world: World, node: SimNode, m: Movement, v: Vehicl
 /** Diagnostics: the last vehicle/reason that caused a gap rejection. */
 export let lastGapThreat = '';
 
+/** Extra critical gap a driver needs when the approach is sight-restricted (can't see the conflicting stream). */
+export function sightPenalty(world: World, linkId: string): number {
+  const link = world.links[linkId];
+  const road = link ? world.roads[link.roadId] : null;
+  if (!road) return 0;
+  return road.curvature > 0.3 || Math.abs(road.grade) > 4 ? 1.5 : road.curvature > 0 ? 0.5 : 0;
+}
+
 /** Gap acceptance against approaching vehicles on movements that have priority over `m`. */
 function gapAccepted(world: World, node: SimNode, m: Movement, v: Vehicle, approaching: Approaching[], criticalGap: number, prioritySet: (other: Approaching) => boolean): boolean {
+  criticalGap += sightPenalty(world, m.fromLink) + (node.skew > 20 ? 0.5 : 0);
   for (const a of approaching) {
     if (a.v.id === v.id) continue;
     if (a.movement.fromLink === m.fromLink) continue;

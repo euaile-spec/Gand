@@ -4,6 +4,7 @@ import type { LinkId, NodeId, SimNode, World } from '../model/types.js';
 import { allTrafficLanes } from '../network/lanes.js';
 import { lostTimePerPhase, planEfficiency } from '../control/signal.js';
 import { nextMovement, posOf, queueLength } from '../traffic/access.js';
+import { sightDistance, sightLimitedSpeed } from '../traffic/dynamics.js';
 
 export interface MovementReport {
   key: string;
@@ -181,6 +182,137 @@ export function hudSummary(world: World) {
     worstWear: Math.max(0, ...Object.values(world.links).map((l) => l.wear)),
     pendingGrowth: world.pendingGrowth.length,
   };
+}
+
+/**
+ * Storage vs discharge: can the block downstream of a signal hold what the upstream signal releases per cycle?
+ * ratio > 1 means the green discharges more than the block can store → spillback into the upstream node.
+ */
+export function storageReport(world: World, nodeId: NodeId): { linkId: LinkId; storageVehicles: number; dischargePerCycle: number; ratio: number; risk: boolean }[] {
+  const node = world.nodes[nodeId];
+  const out: { linkId: LinkId; storageVehicles: number; dischargePerCycle: number; ratio: number; risk: boolean }[] = [];
+  for (const leg of node.legs) {
+    if (!leg.inLink) continue;
+    const link = world.links[leg.inLink];
+    const lanes = link.lanes.filter((l) => l.type === 'general').length || 1;
+    const storage = Math.max(1, Math.floor(((link.length - 15) / 7) * lanes));
+    // Upstream node's signal discharge into this link.
+    const up = world.nodes[link.from];
+    let discharge = 0;
+    if (up?.control.type === 'signal' && up.control.signal?.cycle) {
+      const plan = up.control.signal;
+      for (const m of Object.values(up.movements)) {
+        if (m.toLink !== link.id) continue;
+        let g = 0;
+        for (const p of plan.phases) if (p.movements.includes(m.key)) g += p.split;
+        const laneCount = world.links[m.fromLink].lanes.filter((l) => l.type === 'general' && l.allowed.includes(m.turn)).length || 1;
+        discharge += (1900 / 3600) * g * laneCount * (m.turn === 'T' ? 1 : 0.6);
+      }
+    } else {
+      // Unsignalised upstream: a platoon is whatever arrives in one downstream cycle.
+      const cyc = node.control.signal?.cycle ?? 60;
+      discharge = Object.values(node.metrics.demand).filter((_, i) => i >= 0).reduce((s, d) => s, 0) + (Object.entries(node.metrics.demand).filter(([k]) => k.startsWith(link.id)).reduce((s, [, d]) => s + d, 0) * cyc) / 3600;
+    }
+    const ratio = discharge / storage;
+    out.push({ linkId: link.id, storageVehicles: storage, dischargePerCycle: discharge, ratio, risk: ratio > 0.9 });
+  }
+  return out;
+}
+
+/** Weaving sections (on-ramp merge followed by off-ramp) with their length and an intensity 0..1. */
+export function weavingSections(world: World): { linkId: LinkId; length: number; intensity: number; warning: boolean }[] {
+  const out: { linkId: LinkId; length: number; intensity: number; warning: boolean }[] = [];
+  for (const link of Object.values(world.links)) {
+    const aux = link.lanes.find((l) => l.ramp && l.type === 'general' && l.start === 0);
+    const off = link.pocketRight?.ramp ? link.pocketRight : null;
+    if (!aux || !off) continue;
+    const length = Math.max(0, off.start - aux.end);
+    out.push({ linkId: link.id, length, intensity: Math.max(0, Math.min(1, 1 - length / 300)), warning: length < 150 });
+  }
+  return out;
+}
+
+/** Offset intersections: short roads joining two T-junctions, candidates for realignment. */
+export function offsetIntersections(world: World): { roadId: string; length: number; nodes: [NodeId, NodeId]; realignCostKm: number }[] {
+  const out: { roadId: string; length: number; nodes: [NodeId, NodeId]; realignCostKm: number }[] = [];
+  for (const road of Object.values(world.roads)) {
+    if (road.length > 60) continue;
+    const a = world.nodes[road.a];
+    const b = world.nodes[road.b];
+    if (a?.legs.length === 3 && b?.legs.length === 3) {
+      const mult = road.frontage === 'open' ? 1 : road.frontage === 'parkland' ? 2 : road.frontage === 'built' ? 3 : 6;
+      out.push({ roadId: road.id, length: road.length, nodes: [road.a, road.b], realignCostKm: 0.1 * mult });
+    }
+  }
+  return out;
+}
+
+/** Sight and geometry per approach of a node. */
+export function geometryReport(world: World, nodeId: NodeId): { skew: number; approaches: { linkId: LinkId; grade: number; curvature: number; sightDistance: number; sightLimitedSpeed: number | null }[] } {
+  const node = world.nodes[nodeId];
+  const approaches = node.legs
+    .filter((l) => l.inLink)
+    .map((l) => {
+      const link = world.links[l.inLink!];
+      const road = world.roads[link.roadId];
+      return { linkId: link.id, grade: road.grade, curvature: road.curvature, sightDistance: sightDistance(world, link), sightLimitedSpeed: sightLimitedSpeed(world, link) };
+    });
+  return { skew: node.skew, approaches };
+}
+
+/**
+ * Progression bandwidth along a corridor in one direction: the share of the cycle during which a platoon
+ * leaving the first signal at free-flow speed meets green at every downstream signal. Needs a common cycle.
+ */
+export function bandwidthReport(world: World, corridor: NodeId[], reverse = false): { cycle: number; bandSeconds: number; bandShare: number; coordinated: boolean } {
+  const ids = reverse ? [...corridor].reverse() : corridor;
+  const nodes = ids.map((id) => world.nodes[id]).filter(Boolean);
+  const plans = nodes.map((n) => n.control.signal);
+  if (nodes.length < 2 || plans.some((p) => !p || !p.cycle)) return { cycle: 0, bandSeconds: 0, bandShare: 0, coordinated: false };
+  const cycle = plans[0]!.cycle;
+  const coordinated = plans.every((p) => Math.abs(p!.cycle - cycle) < 0.5 && p!.coordinated);
+  // Green windows (mod cycle) of the through movement toward the next node, from the schedule.
+  const windows: [number, number][] = [];
+  let travel = 0;
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    const plan = n.control.signal!;
+    const next = ids[i + 1];
+    const prev = ids[i - 1];
+    const through = Object.values(n.movements).find((m) => m.turn === 'T' && ((next && world.links[m.toLink].to === next) || (!next && prev && world.links[m.fromLink].from === prev)));
+    if (!through) return { cycle, bandSeconds: 0, bandShare: 0, coordinated };
+    let acc = 0;
+    let start = -1;
+    let end = -1;
+    const inter = lostTimePerPhase(n, world) - 2; // approx yellow + all-red
+    for (const p of plan.phases) {
+      if (p.movements.includes(through.key)) {
+        start = acc;
+        end = acc + p.split;
+        break;
+      }
+      acc += p.split + inter;
+    }
+    if (start < 0) return { cycle, bandSeconds: 0, bandShare: 0, coordinated };
+    const offset = ((plan.offset % cycle) + cycle) % cycle;
+    // Shift into the first signal's frame: subtract travel time to this node.
+    const s = (((start + offset - travel) % cycle) + cycle) % cycle;
+    windows.push([s, s + (end - start)]);
+    if (next) {
+      const link = Object.values(world.links).find((l) => l.from === n.id && l.to === next);
+      travel += link ? link.length / link.speedLimit : 0;
+    }
+  }
+  // Intersect windows on the circle: sample the cycle at 0.5 s.
+  let band = 0;
+  for (let t = 0; t < cycle; t += 0.5) {
+    const ok = windows.every(([s, e]) => {
+      const x = ((t - s) % cycle + cycle) % cycle;
+      return x <= e - s;
+    });
+    if (ok) band += 0.5;
+  }
+  return { cycle, bandSeconds: band, bandShare: band / cycle, coordinated };
 }
 
 export { lostTimePerPhase, posOf };

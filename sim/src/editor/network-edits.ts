@@ -1,6 +1,7 @@
 /** Structural edits to links and lanes, keeping vehicles, indexes and signal plans consistent. */
 import { LANE_WIDTH_NARROW, LANE_WIDTH_STANDARD, type Lane, type LaneId, type Link, type LinkId, type Road, type Turn, type World } from '../model/types.js';
-import { createLink, refreshNodeLegs } from '../network/build.js';
+import { createLink, recomputeLegs, refreshNodeLegs } from '../network/build.js';
+import { autoPlan } from '../control/signal.js';
 import { defaultAllowed, generalLanes, indexLane, makeLane, refreshLinkSpeed, unindexLane } from '../network/lanes.js';
 import { addToLane, posOf, removeFromLane } from '../traffic/access.js';
 import { discardVehicle } from '../traffic/trips.js';
@@ -280,6 +281,99 @@ export function setPocket(world: World, link: Link, spec: PocketSpec): Result {
 }
 
 export const SLIP_STORAGE_DEFAULT = 40;
+
+/** Land cost multiplier for adding pavement along a road. */
+export function frontageMultiplier(road: Road): number {
+  switch (road.frontage) {
+    case 'open':
+      return 1;
+    case 'parkland':
+      return 2;
+    case 'built':
+      return 3;
+    case 'water':
+      return 6;
+  }
+}
+
+/** Offset intersection: a very short road joining two 3-leg nodes — a pair of T-junctions that should be one crossing. */
+export function isOffsetPair(world: World, road: Road): boolean {
+  if (road.length > 60) return false;
+  const a = world.nodes[road.a];
+  const b = world.nodes[road.b];
+  return !!a && !!b && a.legs.length === 3 && b.legs.length === 3;
+}
+
+/**
+ * Realign an offset pair into one four-leg node: the short road is removed and node b's other roads
+ * are re-attached to node a (node a keeps its control). Vehicles on the short road are discarded.
+ */
+export function realignOffset(world: World, road: Road): Result {
+  if (!isOffsetPair(world, road)) return fail('Not an offset pair of T-junctions (short road between two 3-leg nodes)');
+  const keep = world.nodes[road.a];
+  const drop = world.nodes[road.b];
+  if (keep.control.type === 'roundabout' || drop.control.type === 'roundabout') return fail('Remove roundabouts first');
+  for (const r of Object.values(world.busRoutes)) if (r.links.includes(`${road.id}>`) || r.links.includes(`${road.id}<`)) return fail(`Bus route ${r.id} uses the short link`);
+  // Evict vehicles on the short road and in the dropped node.
+  for (const id of [`${road.id}>`, `${road.id}<`]) {
+    const link = world.links[id];
+    if (!link) continue;
+    for (const lane of [link.pocketLeft, ...link.lanes, link.pocketRight, ...link.bays]) {
+      if (!lane) continue;
+      for (const vid of [...lane.vehicles]) {
+        const v = world.vehicles[vid];
+        if (v) discardVehicle(world, v);
+      }
+      unindexLane(world, lane);
+    }
+    for (const dw of link.driveways) {
+      const gen = world.generators[dw.generatorId];
+      if (gen) delete world.generators[gen.id];
+    }
+    delete world.links[id];
+  }
+  for (const vid of [...drop.occupants]) {
+    const v = world.vehicles[vid];
+    if (v) discardVehicle(world, v);
+  }
+  // Re-attach drop's remaining roads to keep; move drop's position onto keep.
+  for (const r of Object.values(world.roads)) {
+    if (r.id === road.id) continue;
+    if (r.a === drop.id) {
+      r.a = keep.id;
+      r.points[0] = keep.pos;
+    }
+    if (r.b === drop.id) {
+      r.b = keep.id;
+      r.points[r.points.length - 1] = keep.pos;
+    }
+    if (r.a === keep.id || r.b === keep.id) {
+      r.length = r.points.reduce((s, p, i) => (i ? s + Math.hypot(p.x - r.points[i - 1].x, p.y - r.points[i - 1].y) : 0), 0);
+      for (const id of [`${r.id}>`, `${r.id}<`]) {
+        const link = world.links[id];
+        if (!link) continue;
+        link.length = r.length;
+        link.from = r.a === keep.id && id.endsWith('>') ? keep.id : link.from === drop.id ? keep.id : link.from;
+        link.to = link.to === drop.id ? keep.id : link.to;
+        for (const lane of [...link.lanes, link.pocketLeft, link.pocketRight].filter(Boolean) as Lane[]) if (lane.end > r.length || lane.type !== 'pocket') lane.end = lane.type === 'pocket' ? r.length : Math.min(lane.end === link.length ? r.length : lane.end, r.length);
+        for (const lane of link.lanes) if (lane.type === 'general' && lane.end >= r.length - 1) lane.end = r.length;
+        if (link.pocketLeft) link.pocketLeft.start = Math.max(0, r.length - (link.pocketLeft.end - link.pocketLeft.start));
+        if (link.pocketRight) link.pocketRight.start = Math.max(0, r.length - (link.pocketRight.end - link.pocketRight.start));
+        refreshLinkSpeed(world, link);
+      }
+    }
+  }
+  delete world.roads[road.id];
+  delete world.nodes[drop.id];
+  recomputeLegs(world, keep);
+  refreshNodeLegs(world, keep);
+  if (keep.control.signal) {
+    keep.control.signal = autoPlan(keep, world, keep.control.signal);
+  }
+  renormaliseSignals(world, [keep.id]);
+  for (const v of Object.values(world.vehicles)) if (!v.cyclic && (v.route.includes(`${road.id}>`) || v.route.includes(`${road.id}<`))) if (!rerouteVehicle(world, v)) discardVehicle(world, v);
+  return ok;
+}
 
 /** Channelised right turn: a right-side slip lane with an island on the inbound link of `leg`. */
 export function setSlipLane(world: World, nodeId: string, legIdx: number, on: boolean, mode: 'yield' | 'free' = 'yield', storage = SLIP_STORAGE_DEFAULT): Result {

@@ -21,13 +21,45 @@ import { linkOccupancy, posOf, vehicleLength } from '../traffic/access.js';
 
 export const MIN_GREEN_DEFAULT = 7;
 
-/** Yellow (ITE kinematic) and all-red clearance for a node approached at speed v (m/s). */
-export function intergreen(node: SimNode, world: World): { yellow: number; allRed: number } {
+/**
+ * Kinematic clearance: yellow = t + v / (2a + 2Gg) on the worst (fastest, steepest downhill) approach;
+ * all-red = longest clearance path / speed, lengthened by skew. The player's adjustments are applied on top;
+ * `kinematicIntergreen` gives the unadjusted values so the safety model can price any deficit.
+ */
+export function kinematicIntergreen(node: SimNode, world: World): { yellow: number; allRed: number } {
+  let yellow = 3.0;
   let v = 10;
-  for (const leg of node.legs) if (leg.inLink) v = Math.max(v, world.links[leg.inLink].speedLimit);
-  const yellow = Math.round((1.0 + v / (2 * 3.0)) * 10) / 10;
-  const allRed = Math.round(((2 * node.radius + 5) / v) * 10) / 10;
-  return { yellow, allRed };
+  for (const leg of node.legs) {
+    if (!leg.inLink) continue;
+    const link = world.links[leg.inLink];
+    const road = world.roads[link.roadId];
+    // Approaching the node: downhill if travelling a→b on a negative grade or b→a on a positive one.
+    const towardB = link.id.endsWith('>');
+    const gradeAlong = (towardB ? road.grade : -road.grade) / 100; // negative = downhill approach
+    const a = 3.0 + 9.81 * gradeAlong; // deceleration available; downhill reduces it
+    const y = 1.0 + link.speedLimit / (2 * Math.max(1.2, a));
+    yellow = Math.max(yellow, y);
+    v = Math.max(v, link.speedLimit);
+  }
+  let path = 2 * node.radius + 5;
+  for (const m of Object.values(node.movements)) if (!m.slip) path = Math.max(path, m.length + 5);
+  const allRed = (path / v) * (1 + node.skew / 90);
+  return { yellow: Math.round(yellow * 10) / 10, allRed: Math.round(allRed * 10) / 10 };
+}
+
+export function intergreen(node: SimNode, world: World): { yellow: number; allRed: number } {
+  const k = kinematicIntergreen(node, world);
+  const plan = node.control.signal;
+  const yellow = Math.max(2.0, k.yellow + (plan?.yellowAdjust ?? 0));
+  const allRed = Math.max(0.5, k.allRed + (plan?.allRedAdjust ?? 0));
+  return { yellow: Math.round(yellow * 10) / 10, allRed: Math.round(allRed * 10) / 10 };
+}
+
+/** Seconds of clearance the plan is short of the kinematic requirement (0 when adequate). */
+export function clearanceDeficit(node: SimNode, world: World): number {
+  const k = kinematicIntergreen(node, world);
+  const a = intergreen(node, world);
+  return Math.max(0, k.yellow - a.yellow) + Math.max(0, k.allRed - a.allRed);
 }
 
 export function lostTimePerPhase(node: SimNode, world: World): number {
@@ -72,6 +104,9 @@ export function emptyPlan(): SignalPlan {
     tsp: false,
     tspMaxExtend: 10,
     laggingLeft: false,
+    leftLead: {},
+    yellowAdjust: 0,
+    allRedAdjust: 0,
   };
 }
 
@@ -185,11 +220,16 @@ export function autoPlan(node: SimNode, world: World, existing?: SignalPlan): Si
       for (const l of links) plan.phases.push(mk([`${l}:T`, `${l}:R`, `${l}:L`, `${l}:U`], split / 2, coordinated));
       return;
     }
-    const protectedLefts = links.filter((l, i) => treatments[i] === 'protected' || treatments[i] === 'protected-permitted').flatMap((l) => [`${l}:L`, `${l}:U`]);
     const permittedLefts = links.filter((l, i) => treatments[i] === 'permitted' || treatments[i] === 'protected-permitted').flatMap((l) => [`${l}:L`, `${l}:U`]);
-    if (protectedLefts.length && !plan.laggingLeft) plan.phases.push(mk(protectedLefts, Math.max(8, split * 0.3)));
+    const protectedLinks = links.filter((l, i) => treatments[i] === 'protected' || treatments[i] === 'protected-permitted');
+    // Lead/lag per approach: leading lefts run before the throughs, lagging ones after. Lead one side and
+    // lag the other to shift that direction's through green and widen a progression band.
+    const side = (l: LinkId): 'lead' | 'lag' => plan.leftLead[l] ?? (plan.laggingLeft ? 'lag' : 'lead');
+    const leading = protectedLinks.filter((l) => side(l) === 'lead').flatMap((l) => [`${l}:L`, `${l}:U`]);
+    const lagging = protectedLinks.filter((l) => side(l) === 'lag').flatMap((l) => [`${l}:L`, `${l}:U`]);
+    if (leading.length) plan.phases.push(mk(leading, Math.max(8, split * 0.3)));
     plan.phases.push(mk([...throughs, ...permittedLefts], split, coordinated));
-    if (protectedLefts.length && plan.laggingLeft) plan.phases.push(mk(protectedLefts, Math.max(8, split * 0.3)));
+    if (lagging.length) plan.phases.push(mk(lagging, Math.max(8, split * 0.3)));
   };
   build(major, 30, plan.coordinated);
   if (minor.length) build(minor, 20, false);

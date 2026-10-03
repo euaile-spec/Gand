@@ -110,6 +110,18 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
 
   // Desired speed
   let v0 = link.speedLimit * p.desiredSpeedFactor * (1 - 0.3 * link.wear);
+  // Grade: heavy vehicles crawl uphill; everyone eases off a little.
+  const road = world.roads[link.roadId];
+  if (road.grade !== 0) {
+    const up = link.id.endsWith('>') ? road.grade : -road.grade; // percent uphill in travel direction
+    if (up > 0) v0 *= Math.max(0.3, 1 - up * (v.cls === 'truck' ? 0.08 : v.cls === 'bus' ? 0.05 : 0.02));
+  }
+  // Sight distance: where the curve or crest hides the node, approach slowly enough to stop.
+  const ssd = sightLimitedSpeed(world, link);
+  if (ssd !== null && link.length - pos < 80) v0 = Math.min(v0, ssd);
+  // Weaving section: entering and exiting traffic cross lanes; nobody goes fast through it.
+  const weave = weaveZone(link);
+  if (weave && pos >= weave.start && pos <= weave.end) v0 = Math.min(v0, link.speedLimit * (1 - 0.35 * weave.intensity));
   if (m && m.turn !== 'T' && link.length - pos < 40) v0 = Math.min(v0, m.speed + 3);
   // Nobody drives through an uncontrolled crossing at speed: approach at a cautious crawl.
   if (m && node.control.type === 'uncontrolled' && node.legs.length >= 3 && link.length - pos < 30) v0 = Math.min(v0, 5);
@@ -255,6 +267,38 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
   (v.place as { pos: number }).pos = newPos;
 }
 
+/** Available sight distance to the downstream node, from curvature and grade. */
+export function sightDistance(world: World, link: Link): number {
+  const road = world.roads[link.roadId];
+  const crest = Math.abs(road.grade) > 3 ? 1 - Math.min(0.5, (Math.abs(road.grade) - 3) * 0.08) : 1;
+  // Urban sight lines are short: a tight curve between buildings leaves well under 50 m.
+  return Math.min(link.length, 120 * (1 - 0.85 * road.curvature) * crest);
+}
+
+/** Highest approach speed at which a driver can still stop within the available sight distance (null if unlimited). */
+export function sightLimitedSpeed(world: World, link: Link): number | null {
+  const road = world.roads[link.roadId];
+  if (road.curvature === 0 && Math.abs(road.grade) <= 3) return null;
+  const sd = sightDistance(world, link);
+  // SSD = 2.5 v + v² / (2·3.4): solve for v.
+  const a = 1 / (2 * 3.4);
+  const v = (-2.5 + Math.sqrt(2.5 * 2.5 + 4 * a * sd)) / (2 * a);
+  return v < link.speedLimit ? v : null;
+}
+
+/** Weaving section on a link: between an on-ramp merge lane's end and an off-ramp pocket's start. */
+export function weaveZone(link: Link): { start: number; end: number; length: number; intensity: number } | null {
+  const aux = link.lanes.find((l) => l.ramp && l.type === 'general' && l.start === 0);
+  const off = link.pocketRight?.ramp ? link.pocketRight : null;
+  if (!aux || !off) return null;
+  const start = Math.max(0, Math.min(aux.end, off.start) - 20);
+  const end = Math.max(aux.end, off.start) + 20;
+  const length = Math.max(1, off.start - aux.end);
+  // Shorter weaves are more intense; 150 m or less is the engineer's rule of thumb for trouble.
+  const intensity = Math.max(0, Math.min(1, 1 - length / 300));
+  return { start, end, length, intensity };
+}
+
 /** On a link departing a CFI node: the position of the pre-signal if it is currently red for departing traffic. */
 function cfiHoldPosition(world: World, link: Link): number | null {
   const road = world.roads[link.roadId];
@@ -350,6 +394,8 @@ function laneChange(world: World, v: Vehicle, lane: Lane, link: Link, dt: number
 
   // Discretionary: balance lanes among those allowing the same turn.
   if (v.cls === 'bus') return null;
+  const wz = weaveZone(link);
+  if (wz && pos >= wz.start && pos <= wz.end) return null;
   const leader = leaderInLane(world, lane, v);
   const myGap = leader ? posOf(world, leader.id) - vehicleLength(leader) - pos : Infinity;
   if (myGap > 25 || v.speed > 0.7 * link.speedLimit) return null;

@@ -9,6 +9,7 @@ import type { Lane, LinkId, NodeId, SimNode, World } from '../model/types.js';
 import { generalLanes } from '../network/lanes.js';
 import { queueLength } from '../traffic/access.js';
 import { POCKET_FREE_TAPER, laneKmCostForLength } from '../economy/resources.js';
+import { offsetIntersections, storageReport } from '../metrics/instruments.js';
 
 export interface BotAction {
   t: number;
@@ -207,6 +208,30 @@ export class EngineerBot {
       }
     }
 
+    // 5b. Spillback protection: when a block can't store what the upstream green releases, meter that green.
+    for (const n of Object.values(w.nodes)) {
+      if (!budget()) break;
+      if (n.control.type !== 'signal' || !n.control.signal) continue;
+      for (const row of storageReport(w, n.id)) {
+        if (!row.risk) continue;
+        const link = w.links[row.linkId];
+        const up = w.nodes[link.from];
+        if (up?.control.type !== 'signal' || !up.control.signal || !this.cool(`${up.id}:meter:${link.id}`)) continue;
+        const idx = up.control.signal.phases.findIndex((p) => p.movements.some((k) => up.movements[k]?.toLink === link.id && up.movements[k]?.turn === 'T') && !p.meterLink);
+        if (idx < 0) continue;
+        if (this.act({ type: 'setMetering', nodeId: up.id, phaseIndex: idx, meterLink: link.id, threshold: 0.75 }, `block ${link.id} stores ${row.storageVehicles} but ${up.id} releases ${row.dischargePerCycle.toFixed(0)}/cycle: meter it`, `${up.id}:meter:${link.id}`)) actions++;
+      }
+    }
+    // 5c. Offset T-junctions that are busy → realign into one crossing (land cost).
+    if (budget() && canBuild) {
+      for (const off of offsetIntersections(w)) {
+        const busy = off.nodes.reduce((s, id) => s + Object.values(w.nodes[id].metrics.demand).reduce((a, d) => a + d, 0), 0);
+        if (busy > 500 && w.resources.laneKm >= off.realignCostKm && this.cool(`${off.roadId}:realign`)) {
+          if (this.act({ type: 'realignOffset', roadId: off.roadId }, `offset pair ${off.nodes.join('/')} carries ${busy.toFixed(0)} veh/h: realign`, `${off.roadId}:realign`)) actions++;
+          break;
+        }
+      }
+    }
     // 6b. Pavement: repave the most worn road before it breeds stalls.
     if (budget() && w.resources.laneKm > 0.1 && canBuild) {
       const worn = Object.values(w.roads)

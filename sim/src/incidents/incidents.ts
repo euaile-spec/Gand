@@ -4,6 +4,8 @@ import type { Incident, IncidentKind, Lane, SimNode, World } from '../model/type
 import { lanesAllowing } from '../network/lanes.js';
 import { conflictBetween } from '../network/geometry.js';
 import { pedRateAtNode } from '../traffic/pedestrians.js';
+import { clearanceDeficit } from '../control/signal.js';
+import { sightPenalty } from '../control/manager.js';
 
 /** Are two conflicting movements fully separated by the signal (never green together, no permitted)? */
 function signalSeparates(node: SimNode, a: string, b: string): boolean {
@@ -52,6 +54,11 @@ export function conflictScore(world: World, node: SimNode): { score: number; wor
     const factor = node.control.signal?.pedTreatment === 'exclusive' || node.control.signal?.pedTreatment === 'scramble' ? 0.1 : node.control.signal?.pedTreatment === 'lpi' ? 0.5 : 1;
     score += ((d[k] ?? 0) * (pedRate / Math.max(1, node.legs.length))) / 3e5 * factor * (leg?.channelisedRight && m.turn === 'R' ? 0.3 : 1);
   }
+  // Geometry: skew and restricted sight make every unresolved conflict worse.
+  const geometryFactor = 1 + node.skew / 60 + node.legs.reduce((s, l) => s + (l.inLink ? sightPenalty(world, l.inLink) / 3 : 0), 0);
+  score *= geometryFactor;
+  // Short clearance: each second stolen from yellow/all-red is red-light running exposure on every approach.
+  if (signal) score += clearanceDeficit(node, world) * 0.4 * node.legs.filter((l) => l.inLink).length;
   // Driveways near the node and dilemma-zone exposure.
   for (const leg of node.legs) {
     if (!leg.inLink) continue;

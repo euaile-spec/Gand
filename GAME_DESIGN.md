@@ -359,6 +359,17 @@ The road *alignment* stays fixed within a run in the sense that matters — the 
 
 The playtest bot handles all of this; two findings from running it on procedural cities: construction must be rationed (it once opened five widening sites at once, each closing a lane for a day, and gridlocked the city it was trying to save — it now builds one site at a time and never in a peak), and procedural seeds vary widely in difficulty, which is what a daily challenge wants.
 
+### Road geometry and the intricate bits
+
+- **Grade and curvature** per road (`MapRoadDef.grade`, `curvature`). Trucks crawl uphill (−8 % speed per % grade), buses −5 %, cars −2 %. A downhill approach needs a longer yellow (ITE `t + v/(2a + 2Gg)` with the grade term). Curves and crests cut **sight distance**; where a driver could not stop within it, the approach speed is capped and gap acceptance needs 0.5–1.5 s more. Restricted sight multiplies the node's conflict score — an uncontrolled crossing you can't see into is where the crashes are.
+- **Skew**: legs are placed in right-angle slots but keep their true angle; the deviation lengthens clearance paths (longer all-red) and widens critical gaps.
+- **Offset intersections**: two T-junctions joined by a road under 60 m. The instrument lists them; `realignOffset` merges them into one four-leg node for 0.1 lane-km × the land multiplier and keeps the surviving node's control. Procedural cities grow one 60 % of the time.
+- **Weaving sections**: where an on-ramp merge lane is followed by an off-ramp pocket on the same link, entering and exiting traffic must cross. Speeds drop with intensity (1 − length/300 m), discretionary lane changes are suppressed, and `weavingSections` warns under 150 m.
+- **Storage vs discharge** (`storageReport`): vehicles a block can hold versus what the upstream signal releases per cycle; ratio > 0.9 is spillback risk. The bot answers it with metering.
+- **Right-of-way as the land budget**: each road has a `frontage` — open ×1, parkland ×2, built ×3, water ×6 on widening cost — and a `maxWidth` cap. Roads with homes, offices or shops become built automatically; stadium lots stay open. Which corridor you can afford to widen is now a geography question.
+- **Clearance as a choice** (`setClearance`): yellow and all-red can be trimmed up to 1.5 s each. Every second stolen shows up as cycle efficiency *and* as a clearance deficit that raises the crash score on every approach.
+- **Lead/lag per approach** (`setLeftLead`): lead one protected left and lag the opposite one to shift that direction's through green; `bandwidthReport` measures the progression band along a corridor so the time–space tuning has a number.
+
 ### Tutorial chain
 
 Ten scenarios, one concept each, with pre-broken setups and tool unlocks (`sim/src/game/scenarios.ts`): First Signal → Lost Time (a 150 s split-phase mess) → The Short Pocket (20 m, overflowing) → Permitted-Left Starvation → Who Gets the Green (splits/actuation) → The Mall Opens (driveways) → Move People, Not Cars (bus lane/TSP) → Green Wave (offsets) → The Roundabout Question (balanced vs dominant flows) → Match Day (metering through a stadium let-out). Then endless mode on each of the three maps.
