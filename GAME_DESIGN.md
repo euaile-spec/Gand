@@ -312,7 +312,36 @@ Target 500–2000 vehicles at 60 fps in a browser. Fixed 10 Hz physics step, int
 
 ---
 
-## 7. MVP Scope (first playable)
+## 7. Engine Status (what is built)
+
+The headless simulation engine lives in `sim/` (TypeScript, no DOM, deterministic, 39 tests). Everything below is implemented and exercised by the test suite and the balancing harness; rendering is the only layer not built.
+
+| Area | Implemented |
+|---|---|
+| Network | Fixed road alignments, two-way/one-way links, lanes with per-lane turn permissions, turn pockets with storage length and overflow into the through lane, lane drops before/after a node, medians (none/open/closed/TWLTL), parking lanes and peak-hour bans, bus bays, mid-block crossings, driveways with throat storage, median U-turn crossovers. |
+| Conflicts | Chord-based conflict matrix per node (cross / merge / ped-hard / ped-soft), U-turn handling, roundabout arc conflicts, CFI/interchange conflict overrides. |
+| Control | Uncontrolled (priority-to-the-right + gap acceptance), two-way stop, yield, all-way stop (FIFO), roundabouts (1–2 lanes), signals: phase ring, explicit lost time (yellow + all-red from approach speed), cycle, splits, protected / permitted / protected+permitted / split lefts, leading/lagging, right-on-red, channelised rights, ped minimum greens from crossing width, LPI, exclusive and scramble phases, actuation with stop-bar and advance detectors (gap-out, dilemma-zone hold), coordination with offsets, dynamic metering against a downstream link, transit signal priority (extend/truncate), emergency pre-emption, malfunction → flashing red. Permitted-left "sneakers" clear on yellow. |
+| Vehicles | IDM car-following; cars, buses, trucks (corner radius), emergency vehicles; lane choice and mandatory/discretionary lane changes; box protection and box blocking; patience, improvisation when stuck in the wrong lane; non-compliance; left-in across traffic (blocks the lane unless a TWLTL exists); right-in/right-out. |
+| Demand | Land-use production/attraction profiles with AM/PM/lunch/school peaks, O-D choice with affinity and distance decay, people per vehicle, bus mode share where routes serve both ends, trucks to shops, surges from events, generators opening on later days. |
+| Transit | Fixed bus loops, headway-based fleet sizing, curbside stops (block the lane) vs bays, boarding/alighting dwell, bus lanes (cars may use unprotected ones to turn right), bus-only queue-jump pockets, TSP. |
+| Routing | Time-dependent Dijkstra with observed travel times, control-delay and v/c penalties, unprotected-left discomfort, crossover U-turn edges, closed-link avoidance, periodic re-routing, VMS steering with partial compliance. |
+| Resources | Lane-km (widen, pockets beyond the free taper, driveway connectors), structure tokens (roundabout 1, one-way 1, MUT/RCUT 1, CFI 2, interchange 3), weekly allotment with the token-or-lanes choice, 100 % refunds where the doc says so, one-day construction closures. |
+| Incidents & events | Conflict score from exposure × unresolved conflicts, driveway density, ped conflicts and dilemma-zone exposure → crashes (lane or node blocking), stalls, double-parked deliveries without a loading zone, parking manoeuvres, signal faults; scheduled stadium let-outs, school pick-up, roadworks, parades, highway dumps, rain. |
+| Instruments | People/hour, person-delay, gridlock meter, LOS per node, HCM-style capacities and v/c per movement, turning movement counts, O-D highlight for a movement, time–space data per corridor, delay heatmap, queue histories, conflict and transit overlays, HUD summary. |
+| Game | `Game` with pause/1×/2×/4×, every edit as a validated `Command`, draft mode with headless preview and commit/discard, seed + command-log saves and exact replay, scenarios with goals and tool unlocks, endless mode with daily growth. |
+
+Balancing on the tutorial map (default demand, growth 6 %/day, measured with `sim/src/cli/balance.ts`):
+
+| Plan | Gridlock on | Peak people moved / h |
+|---|---|---|
+| Two-way stops at every node | day 4 | ~1,500 |
+| Every node uncontrolled | day 10 | ~2,300 |
+| Arterial signals with permitted lefts only, stops elsewhere | day 10 | ~2,300 |
+| Arterial signals, actuated 60 s cycle, **protected lefts with 60 m pockets**, stops elsewhere | **day 14** | **~2,640** |
+
+Competent engineering buys four extra days and 15 % more throughput; a naive plan buys nothing. Signalising a node with permitted lefts and a long cycle can be *worse* than leaving it uncontrolled, which is correct behaviour and is the first thing the tutorial should teach.
+
+## 8. MVP Scope (first playable)
 
 **In:**
 - One hand-made grid map, ~9 intersections. All roads 1+1 except one 2+2 arterial. Driveways on every generator.
@@ -331,7 +360,7 @@ Target 500–2000 vehicles at 60 fps in a browser. Fixed 10 Hz physics step, int
 
 ---
 
-## 8. Open Questions
+## 9. Open Questions
 
 - Weekly lane-km allotment: scale with city size, or stay flat so the late game is genuinely starved?
 - Weekly token-or-lanes choice: card pick (legible, interrupting) or quiet menu?

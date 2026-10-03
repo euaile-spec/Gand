@@ -612,7 +612,7 @@ export const DEFAULT_CONFIG: WorldConfig = {
   dayLength: 3600,
   daysPerWeek: 7,
   growthPerDay: 1.06,
-  baseTripsPerHourPerSize: 1.6,
+  baseTripsPerHourPerSize: 5,
   tickDt: 0.1,
   rerouteInterval: 60,
   rerouteShare: 0.3,
