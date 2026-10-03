@@ -89,6 +89,9 @@ function conflictingOccupant(world: World, node: SimNode, m: Movement, v: Vehicl
   return { hard, mergeAhead };
 }
 
+/** Diagnostics: the last vehicle/reason that caused a gap rejection. */
+export let lastGapThreat = '';
+
 /** Gap acceptance against approaching vehicles on movements that have priority over `m`. */
 function gapAccepted(world: World, node: SimNode, m: Movement, v: Vehicle, approaching: Approaching[], criticalGap: number, prioritySet: (other: Approaching) => boolean): boolean {
   for (const a of approaching) {
@@ -97,9 +100,19 @@ function gapAccepted(world: World, node: SimNode, m: Movement, v: Vehicle, appro
     const k = conflictKind(node, m, a.movement);
     if (k === 'none') continue;
     if (!prioritySet(a)) continue;
-    // A vehicle that is itself stopped and waiting is not a threat unless it is at the line with right of way.
-    if (a.v.speed < 0.5 && !a.atLine) continue;
-    if (a.tta < criticalGap) return false;
+    // A stopped vehicle is only a threat when it is at the line and got there first (it has precedence);
+    // moving vehicles are judged by time-to-arrival.
+    if (a.v.speed < 0.5) {
+      if (!a.atLine) continue;
+      if (a.v.stopLineArrival === 0 || (v.stopLineArrival > 0 && a.v.stopLineArrival > v.stopLineArrival)) continue;
+      if (v.stopLineArrival > 0 && a.v.stopLineArrival === v.stopLineArrival && a.v.id > v.id) continue;
+      lastGapThreat = `${a.v.id}@${a.movement.key} stopped-at-line arrived ${a.v.stopLineArrival.toFixed(0)} vs mine ${v.stopLineArrival.toFixed(0)}`;
+      return false;
+    }
+    if (a.tta < criticalGap) {
+      lastGapThreat = `${a.v.id}@${a.movement.key} tta=${a.tta.toFixed(1)} v=${a.v.speed.toFixed(1)}`;
+      return false;
+    }
   }
   return true;
 }
@@ -145,22 +158,28 @@ export function mayEnter(world: World, node: SimNode, v: Vehicle, m: Movement, a
       if (!sig) return allWayStop(world, node, v, m, approaching, occ.mergeAhead);
       if (sig.green(m.key)) {
         if (sig.heldForLpi(m.key)) return NO('lpi');
-        // Permitted movements yield to conflicting green movements (e.g. permitted left vs opposite through).
+        // Permitted movements yield to conflicting green movements that have priority over them
+        // (a permitted left yields to the opposing through; the through never yields to the left).
         const protectedPhase = isProtected(node, m, sig);
         if (!protectedPhase) {
-          // A permitted movement yields to every conflicting movement that also has green.
-          const ok = gapAccepted(world, node, m, v, approaching, CRITICAL_GAP.permittedLeft, (a) => sig.green(a.movement.key) && isHardConflict(conflictBetween(node, a.movement.key, m.key)));
+          const ok = gapAccepted(world, node, m, v, approaching, CRITICAL_GAP.permittedLeft, (a) => sig.green(a.movement.key) && yieldsTo(m, a.movement, conflictBetween(node, m.key, a.movement.key)));
           if (!ok) return NO('gap');
         }
         if (pedInCrosswalk(node, m, world) && conflictBetween(node, m.key, pedKeyFor(node, m.exitLeg)) === 'ped-soft') return NO('peds');
         return { go: true, mergeLeader: occ.mergeAhead };
       }
       if (sig.yellow(m.key)) {
-        // Enter on yellow only if we cannot comfortably stop.
         const link = world.links[m.fromLink];
         const back = link.length - posOf(world, v.id);
+        // Enter on yellow if we cannot comfortably stop.
         const stopDist = (v.speed * v.speed) / (2 * 3.0);
         if (stopDist > back && v.speed > 2) return { go: true, mergeLeader: occ.mergeAhead };
+        // "Sneaker": a permitted vehicle that waited at the line through the green clears during the yellow,
+        // provided nothing conflicting is about to arrive (opposing traffic is stopping for its own yellow).
+        if (back < 5 && v.speed < 0.5 && !isProtected(node, m, sig)) {
+          const ok = gapAccepted(world, node, m, v, approaching, 2.0, (a) => a.v.speed >= 0.5 && isHardConflict(conflictBetween(node, m.key, a.movement.key)));
+          if (ok) return { go: true, mergeLeader: occ.mergeAhead };
+        }
         return NO('yellow');
       }
       // Red. Right on red / channelised right.
@@ -231,13 +250,13 @@ function pedKeyFor(node: SimNode, leg: Leg): string {
   return `ped:${leg}`;
 }
 
-/** A movement is protected in the current phase if no conflicting movement is also green. */
+/** A movement is protected in the current phase if no green movement has priority over it. */
 function isProtected(node: SimNode, m: Movement, sig: SignalView): boolean {
   for (const other of Object.values(node.movements)) {
     if (other.key === m.key) continue;
-    if (!sig.green(other.key)) continue;
+    if (!sig.green(other.key) && !sig.yellow(other.key)) continue;
     const k = conflictBetween(node, m.key, other.key);
-    if (k === 'cross') return false;
+    if (k === 'cross' && yieldsTo(m, other, k)) return false;
   }
   return true;
 }

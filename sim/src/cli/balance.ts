@@ -5,6 +5,7 @@
 import { Game } from '../game/game.js';
 import { tutorialMap } from '../maps/tutorial.js';
 import { hourOfDay } from '../demand/profiles.js';
+import { debugDump } from './debug.js';
 
 const days = Number(process.argv[2] ?? 3);
 const seed = Number(process.argv[3] ?? 1);
@@ -31,4 +32,7 @@ for (let d = 0; d < days && !g.world.gameOver; d++) {
   );
   peakVeh = 0;
 }
-if (g.world.gameOver) console.log(`GAME OVER on day ${g.world.day} at h=${hourOfDay(g.world).toFixed(1)}`);
+if (g.world.gameOver) {
+  console.log(`GAME OVER on day ${g.world.day} at h=${hourOfDay(g.world).toFixed(1)}`);
+  debugDump(g.world);
+}
