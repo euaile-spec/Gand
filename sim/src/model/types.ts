@@ -82,6 +82,10 @@ export interface Lane {
   busOnly?: boolean;
   /** Parking lane currently opened to traffic by a peak-hour ban. */
   peakLane?: boolean;
+  /** CFI displaced-left bay: entered only when the pre-signal lets lefts cross the opposing lanes. */
+  cfi?: boolean;
+  /** Interchange ramp: an off-ramp pocket (allowed L/R) or an on-ramp merge lane (allowed none). */
+  ramp?: boolean;
   /** Channelised right-turn slip lane with an island: bypasses the signal. */
   slip?: boolean;
   slipMode?: 'yield' | 'free';
@@ -428,6 +432,9 @@ export interface Crossover {
   /** Vehicles currently waiting in the bay per direction. */
   waitingFwd: VehicleId[];
   waitingBwd: VehicleId[];
+  /** CFI pre-signal: the main node and the approach link whose lefts cross here. */
+  mainNode?: NodeId;
+  approachLink?: LinkId;
 }
 
 // ───────────────────────────── demand ─────────────────────────────

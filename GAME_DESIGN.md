@@ -319,7 +319,7 @@ The headless simulation engine lives in `sim/` (TypeScript, no DOM, deterministi
 | Area | Implemented |
 |---|---|
 | Network | Fixed road alignments, two-way/one-way links, lanes with per-lane turn permissions, turn pockets with storage length and overflow into the through lane, lane drops before/after a node, medians (none/open/closed/TWLTL), parking lanes and peak-hour bans, bus bays, mid-block crossings, driveways with throat storage, median U-turn crossovers. |
-| Conflicts | Chord-based conflict matrix per node (cross / merge / ped-hard / ped-soft), U-turn handling, roundabout arc conflicts, CFI/interchange conflict overrides. |
+| Conflicts | Chord-based conflict matrix per node (cross / merge / ped-hard / ped-soft), U-turn handling, roundabout arc conflicts, slip-lane separation. CFI: physical displaced-left bays entered through a pre-signal slaved to the main signal, with departing traffic held at the crossover. Interchanges: off-ramp pockets carrying every exit (they overflow onto the mainline when too short) and on-ramp merge lanes. |
 | Control | Uncontrolled (priority-to-the-right + gap acceptance), two-way stop, yield, all-way stop (FIFO), roundabouts (1–2 lanes), channelised right-turn slip lanes (yield / free-flow, with island), signals: phase ring, explicit lost time (yellow + all-red from approach speed), cycle, splits, protected / permitted / protected+permitted / split lefts, leading/lagging, right-on-red, channelised rights, ped minimum greens from crossing width, LPI, exclusive and scramble phases, actuation with stop-bar and advance detectors (gap-out, dilemma-zone hold), coordination with offsets, dynamic metering against a downstream link, transit signal priority (extend/truncate), emergency pre-emption, malfunction → flashing red. Permitted-left "sneakers" clear on yellow. |
 | Vehicles | IDM car-following; cars, buses, trucks (corner radius), emergency vehicles; lane choice and mandatory/discretionary lane changes; box protection and box blocking; patience, improvisation when stuck in the wrong lane; non-compliance; left-in across traffic (blocks the lane unless a TWLTL exists); right-in/right-out. |
 | Demand | Land-use production/attraction profiles with AM/PM/lunch/school peaks, O-D choice with affinity and distance decay, people per vehicle, bus mode share where routes serve both ends, trucks to shops, surges from events, generators opening on later days. |
@@ -330,16 +330,27 @@ The headless simulation engine lives in `sim/` (TypeScript, no DOM, deterministi
 | Instruments | People/hour, person-delay, gridlock meter, LOS per node, HCM-style capacities and v/c per movement, turning movement counts, O-D highlight for a movement, time–space data per corridor, delay heatmap, queue histories, conflict and transit overlays, HUD summary. |
 | Game | `Game` with pause/1×/2×/4×, every edit as a validated `Command`, draft mode with headless preview and commit/discard, seed + command-log saves and exact replay, scenarios with goals and tool unlocks, endless mode with daily growth. |
 
-Balancing on the tutorial map (default demand, growth 6 %/day, measured with `sim/src/cli/balance.ts`):
+### Balancing
 
-| Plan | Gridlock on | Peak people moved / h |
-|---|---|---|
-| Two-way stops at every node | day 4 | ~1,500 |
-| Every node uncontrolled | day 10 | ~2,300 |
-| Arterial signals with permitted lefts only, stops elsewhere | day 10 | ~2,300 |
-| Arterial signals, actuated 60 s cycle, **protected lefts with 60 m pockets**, stops elsewhere | **day 14** | **~2,640** |
+Three maps ship with the engine: **Tutorial** (3×3 grid, one arterial), **Radial** (inner ring of jobs, outer ring of homes, four 2+2 spokes — strongly tidal) and **River** (homes west, jobs east, three bridges — tidal through chokepoints).
 
-Competent engineering buys four extra days and 15 % more throughput; a naive plan buys nothing. Signalising a node with permitted lefts and a long cycle can be *worse* than leaving it uncontrolled, which is correct behaviour and is the first thing the tutorial should teach.
+A **playtest bot** (`sim/src/bot/engineer.ts`) plays as a reactive engineer: every ten in-game minutes it reads the instruments and applies the fix a competent player would — signals with detectors where conflict or demand warrants, two-way stops where a minor street is light, pockets and protected phases where a left saturates, longer pockets when they overflow, more green or a longer cycle for saturated throughs, slip lanes for saturated rights, parking bans then parking removal then widening for the worst link, roundabouts at balanced minor nodes, and the weekly token-or-lanes choice. Every action is logged with its reason.
+
+Survival with and without the bot, 16-day runs, two seeds each (`sim/src/cli/multi.ts`):
+
+| Map | No intervention | Bot | Peak people/h (none → bot) |
+|---|---|---|---|
+| Tutorial | day 7.5 | **day 12** | 1,970 → 2,590 |
+| Radial | day 7.5 | **day 10** | 2,140 → 2,410 |
+| River | day 5.5 | **day 7** | 1,980 → 2,150 |
+
+Scripted fixed plans on the tutorial map, for reference: stops everywhere day 4; all uncontrolled day 10; arterial signals with permitted lefts day 10; arterial signals, actuated, protected lefts + 60 m pockets **day 14**.
+
+Two findings from the bot that shaped the sim: (1) an *early* version of the bot made things worse on every map, because it signalised too eagerly and because vehicles approached uncontrolled crossings at full speed — everyone now creeps on approach to an uncontrolled node, and the bot uses a stricter signal warrant; (2) a peak-hour parking lane that reverted while vehicles were still landing in it stranded drivers in a lane with no permitted turns — a real bug the bot found in an hour.
+
+### Tutorial chain
+
+Ten scenarios, one concept each, with pre-broken setups and tool unlocks (`sim/src/game/scenarios.ts`): First Signal → Lost Time (a 150 s split-phase mess) → The Short Pocket (20 m, overflowing) → Permitted-Left Starvation → Who Gets the Green (splits/actuation) → The Mall Opens (driveways) → Move People, Not Cars (bus lane/TSP) → Green Wave (offsets) → The Roundabout Question (balanced vs dominant flows) → Match Day (metering through a stadium let-out). Then endless mode on each of the three maps.
 
 ## 8. MVP Scope (first playable)
 

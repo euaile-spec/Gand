@@ -10,6 +10,13 @@ function addEvent(world: World, kind: EventKind, start: number, end: number, tar
   return e;
 }
 
+/** Schedule an event today at the given fractions of the day (scenarios, tests). */
+export function scheduleEvent(world: World, kind: EventKind, startTod: number, endTod: number, target: string | null): WorldEvent {
+  const D = world.config.dayLength;
+  const dayStart = Math.floor(world.t / D) * D;
+  return addEvent(world, kind, dayStart + startTod * D, dayStart + endTod * D, target);
+}
+
 /** Called at the start of each day to schedule that day's events. */
 export function scheduleDailyEvents(world: World): void {
   const D = world.config.dayLength;

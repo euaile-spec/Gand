@@ -2,7 +2,7 @@
  * Intersection manager: decides whether the front vehicle of a lane may enter the node
  * under the node's control, and handles gap acceptance against conflicting traffic.
  */
-import type { ConflictKind, Leg, Movement, SimNode, Turn, Vehicle, World } from '../model/types.js';
+import type { ConflictKind, Lane, Leg, Movement, SimNode, Turn, Vehicle, World } from '../model/types.js';
 import { conflictBetween, isHardConflict, yieldsTo } from '../network/geometry.js';
 import { lanesAllowing } from '../network/lanes.js';
 import { nextMovement, posOf, vehicleLength } from '../traffic/access.js';
@@ -309,8 +309,13 @@ export function destinationHasRoom(world: World, node: SimNode, v: Vehicle, m: M
 export function destinationLane(world: World, v: Vehicle, m: Movement) {
   const dest = world.links[m.toLink];
   const general = dest.lanes.filter((l) => (l.type === 'general' || (l.type === 'bus' && (v.cls === 'bus' || v.cls === 'emergency'))) && (l.allowed.length > 0 || l.end < dest.length - 0.5));
-  // Prefer a lane that allows the vehicle's *following* turn when the link is short.
   if (!general.length) return null;
+  // Interchange on-ramp: cross-street traffic joining the mainline lands in the merge lane.
+  const ramp = dest.lanes.find((l) => l.ramp && l.type === 'general' && l.start === 0);
+  if (ramp) {
+    const ic = world.interchanges[dest.from];
+    if (ic && !ic.bridgeLinks.includes(m.fromLink)) return ramp;
+  }
   const from = world.links[m.fromLink];
   let idx: number;
   if (m.turn === 'L' || m.turn === 'U') idx = 0;
@@ -328,6 +333,49 @@ export function destinationLane(world: World, v: Vehicle, m: Movement) {
   const lane = general[idx];
   if (lane.blockedAt !== null && lane.blockedAt < 10 && general.length > 1) return general[idx === 0 ? 1 : idx - 1];
   return lane;
+}
+
+/**
+ * CFI pre-signal: lefts may cross the opposing lanes into the displaced bay while the main signal
+ * is not serving the arterial throughs (the cross-street phase and the clearance around it).
+ */
+export function cfiCrossingOpen(world: World, approachLink: string): boolean {
+  const link = world.links[approachLink];
+  const node = link ? world.nodes[link.to] : null;
+  if (!node || node.form !== 'cfi-main') return true;
+  const sig = viewFor(node, world);
+  const leg = node.legs.find((l) => l.inLink === approachLink);
+  const opp = leg ? node.legs.find((l) => l.leg === ((leg.leg + 2) % 4)) : null;
+  if (!sig) {
+    // Flashing red / no plan: cross on a gap in the departing traffic.
+    const road = world.roads[link.roadId];
+    const rev = world.links[approachLink.endsWith('>') ? `${road.id}<` : `${road.id}>`];
+    const xo = road.crossovers.find((x) => x.kind === 'cfi-presignal' && x.approachLink === approachLink);
+    if (!rev || !xo) return true;
+    const landing = approachLink.endsWith('>') ? road.length - xo.pos : xo.pos;
+    return opposingGapAt(world, rev, landing, 4.5);
+  }
+  const myT = `${approachLink}:T`;
+  const oppT = opp?.inLink ? `${opp.inLink}:T` : null;
+  const serving = (k: string | null) => !!k && (sig.green(k) || sig.yellow(k));
+  return !serving(myT) && !serving(oppT);
+}
+
+/** Minimal gap check (mirrors dynamics.opposingGap without importing it, to avoid a cycle). */
+function opposingGapAt(world: World, link: { lanes: Lane[] }, pos: number, critical: number): boolean {
+  for (const lane of link.lanes) {
+    if (lane.type === 'parking') continue;
+    for (const id of lane.vehicles) {
+      const o = world.vehicles[id];
+      const op = posOf(world, id);
+      if (op > pos + 2) continue;
+      const d = pos - op;
+      if (d < vehicleLength(o) + 2) return false;
+      if (d / Math.max(o.speed, 0.5) < critical) return false;
+      break;
+    }
+  }
+  return true;
 }
 
 export function viewFor(node: SimNode, world: World): SignalView | null {

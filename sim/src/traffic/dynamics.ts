@@ -6,7 +6,7 @@ import { chance } from '../core/rng.js';
 import { clamp, removeFromArray } from '../core/util.js';
 import type { Lane, Link, Movement, SimNode, Vehicle, World } from '../model/types.js';
 import { allTrafficLanes, neighbourLane } from '../network/lanes.js';
-import { approachingVehicles, destinationLane, mayEnter, viewFor, type Approaching, type EntryDecision } from '../control/manager.js';
+import { approachingVehicles, cfiCrossingOpen, destinationLane, mayEnter, viewFor, type Approaching, type EntryDecision } from '../control/manager.js';
 import type { SignalView } from '../control/signal.js';
 import { destinationLinks, rerouteVehicle, shortestPath } from '../routing/routing.js';
 import {
@@ -145,6 +145,13 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
   const pocketWait = pocketTailObstacle(world, v, lane, link, required, pos);
   if (pocketWait) obs = nearer(obs, pocketWait);
 
+  // CFI pre-signal: lefts wait at the crossover until the main signal lets them cross the opposing lanes.
+  const cfiBay = required.find((l) => l.cfi);
+  if (cfiBay && lane !== cfiBay && pos >= cfiBay.start - 60 && !cfiCrossingOpen(world, link.id)) obs = nearer(obs, stopAt(pos, cfiBay.start - 1, v));
+  // Departing traffic is held at the crossover while lefts are crossing in front of it.
+  const hold = cfiHoldPosition(world, link);
+  if (hold !== null && pos < hold - 0.5) obs = nearer(obs, stopAt(pos, hold - 1, v));
+
   // Destination on this link.
   let arriving = false;
   if (!m && !crossoverNext && v.destPos !== null) {
@@ -248,6 +255,19 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
   (v.place as { pos: number }).pos = newPos;
 }
 
+/** On a link departing a CFI node: the position of the pre-signal if it is currently red for departing traffic. */
+function cfiHoldPosition(world: World, link: Link): number | null {
+  const road = world.roads[link.roadId];
+  if (!road.crossovers.length) return null;
+  for (const xo of road.crossovers) {
+    if (xo.kind !== 'cfi-presignal' || !xo.approachLink || xo.approachLink === link.id) continue;
+    if (world.links[xo.approachLink]?.roadId !== link.roadId) continue;
+    // This link is the reverse of the approach; lefts cross it at the crossover.
+    if (cfiCrossingOpen(world, xo.approachLink)) return link.id.endsWith('>') ? xo.pos : road.length - xo.pos;
+  }
+  return null;
+}
+
 function inRequiredOrContinuing(lane: Lane, required: Lane[], link: Link): boolean {
   if (required.includes(lane)) return lane.end >= link.length - 0.5;
   return false;
@@ -318,6 +338,7 @@ function laneChange(world: World, v: Vehicle, lane: Lane, link: Link, dt: number
       const step = neighbourLane(link, lane, dir);
       if (!step) return null;
       if (step.type === 'pocket' && pos < step.start) return null; // pocket not reachable yet
+      if (step.cfi && !cfiCrossingOpen(world, link.id)) return null; // pre-signal red
       if (step.type === 'bus' && v.cls !== 'bus' && v.cls !== 'emergency' && step.protectedBus) return null;
       if (pos < step.start || pos > step.end) return null;
       const urgency = clamp(1 - (laneEnds ? lane.end - pos : remaining - 20) / 100, 0, 1);

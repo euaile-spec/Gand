@@ -6,7 +6,9 @@ Headless, deterministic traffic-engineering simulation for **Gand** (see `../GAM
 npm install
 npm test                      # vitest
 npx tsx src/cli/run.ts 1800 42 --signals --debug     # headless run with stall diagnostics
-npx tsx src/cli/balance.ts 10 1 --signals --growth=1.12   # multi-day balancing harness
+npx tsx src/cli/balance.ts 10 1 --smart --actuated   # scripted fixed plans, multi-day
+npx tsx src/cli/bot.ts 16 1 --map=river --verbose    # reactive playtest bot with action log
+npx tsx src/cli/multi.ts 16 --seeds=3                # maps × seeds × {none, bot} survival table
 ```
 
 ## Layout
@@ -24,7 +26,8 @@ npx tsx src/cli/balance.ts 10 1 --signals --growth=1.12   # multi-day balancing 
 | `src/metrics/` | Rolling people-flow and delay, LOS, HCM-style capacities and v/c, gridlock meter, queue histories; `instruments.ts` read-only queries (TMC, O-D highlight, time-space data, heatmaps, HUD). |
 | `src/editor/` | `commands.ts` every player edit as a validated `Command`; `network-edits.ts` lane/road surgery that keeps vehicles and plans consistent; `transforms.ts` roundabout, MUT, RCUT, CFI, interchanges. |
 | `src/game/` | `tick.ts` orchestration + day/week transitions; `game.ts` `Game` (time control, draft/preview, save/replay, scenario goals); `scenarios.ts`. |
-| `src/maps/tutorial.ts` | 3×3 grid, 200 m blocks, one 2+2 arterial, external gateways, land uses, one bus loop. |
+| `src/maps/` | `tutorial` (3×3 grid, one arterial), `radial` (ring + spokes, tidal), `river` (two banks, three bridges). |
+| `src/bot/engineer.ts` | Reactive playtest bot: reads instruments, applies fixes with reasons; ablation via `disabled`. |
 
 ## Using it from a renderer
 

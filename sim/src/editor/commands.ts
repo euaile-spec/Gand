@@ -101,6 +101,9 @@ const UNLOCK_FOR: Partial<Record<Command['type'], string>> = {
   buildInterchange: 'interchange',
   setVms: 'vms',
   setLaneType: 'bus-lane',
+  setDriveway: 'driveway',
+  relocateDriveway: 'driveway',
+  consolidateDriveways: 'driveway',
 };
 
 function node(world: World, id: NodeId) {

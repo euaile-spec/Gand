@@ -5,7 +5,9 @@ import { generalLanes } from '../network/lanes.js';
 import { autoPlan, emptyRuntime, normalisePlan } from '../control/signal.js';
 import { rerouteVehicle } from '../routing/routing.js';
 import { discardVehicle } from '../traffic/trips.js';
-import { fail, ok, type Result } from './network-edits.js';
+import { fail, ok, setPocket, type Result } from './network-edits.js';
+import { indexLane, makeLane, unindexLane } from '../network/lanes.js';
+import { mergeLaneInto, renumberLanes } from './network-edits.js';
 
 /** The arterial legs: the opposite pair with the most through lanes. Returns [majorLegs, minorLegs]. */
 export function majorMinorLegs(world: World, node: SimNode): [SimNode['legs'], SimNode['legs']] {
@@ -63,6 +65,25 @@ export function resetForm(world: World, node: SimNode): void {
   node.conflictOverrides = undefined;
   node.form = 'standard';
   removeCrossovers(world, node);
+  // Tear down CFI bays and interchange ramps.
+  for (const leg of node.legs) {
+    if (leg.inLink) {
+      const link = world.links[leg.inLink];
+      if (link.pocketLeft?.cfi) setPocket(world, link, { side: 'left', storage: 0, source: 'narrow' });
+      if (link.pocketRight?.ramp) setPocket(world, link, { side: 'right', storage: 0, source: 'narrow' });
+    }
+    if (leg.outLink) {
+      const out = world.links[leg.outLink];
+      const aux = out.lanes.find((l) => l.ramp && l.type === 'general');
+      if (aux) {
+        const keep = out.lanes.find((l) => l.type === 'general' && l !== aux);
+        if (keep) mergeLaneInto(world, aux, keep);
+        unindexLane(world, aux);
+        out.lanes.splice(out.lanes.indexOf(aux), 1);
+        renumberLanes(world, out);
+      }
+    }
+  }
   refreshNodeLegs(world, node);
   if (node.control.signal) normalisePlan(node, world, node.control.signal);
 }
@@ -139,24 +160,38 @@ export function buildRcut(world: World, node: SimNode): Result {
 export function buildCfi(world: World, node: SimNode): Result {
   const [major] = majorMinorLegs(world, node);
   if (major.length < 2) return fail('Needs a through arterial');
+  for (const leg of major) {
+    if (!leg.inLink) continue;
+    const link = world.links[leg.inLink];
+    if (link.length < 140) return fail(`Block ${link.id} is too short for a displaced-left bay`);
+    if (link.pocketLeft && !link.pocketLeft.cfi) return fail('Remove the left-turn pocket first');
+  }
   resetForm(world, node);
   node.form = 'cfi-main';
   const overrides: [string, string][] = [];
+  const plan = node.control.signal ?? undefined;
   for (const leg of major) {
     if (!leg.inLink) continue;
     const opp = major.find((l) => l !== leg);
     if (!opp?.inLink) continue;
-    overrides.push([`${leg.inLink}:L`, `${opp.inLink}:T`], [`${leg.inLink}:L`, `${opp.inLink}:R`]);
-    // Pre-signal crossover marker on the approach (for the renderer and conflict scoring).
+    overrides.push([`${leg.inLink}:L`, `${opp.inLink}:T`], [`${leg.inLink}:L`, `${opp.inLink}:R`], [`${leg.inLink}:U`, `${opp.inLink}:T`]);
+    // The displaced-left bay runs from the pre-signal crossover to the node.
+    const link = world.links[leg.inLink];
     const road = world.roads[leg.roadId];
-    const d = Math.min(90, road.length * 0.5);
+    const d = Math.min(100, link.length * 0.5);
+    const r = setPocket(world, link, { side: 'left', storage: d, source: road.median !== 'none' ? 'median' : 'narrow' });
+    if (!r.ok) return r;
+    link.pocketLeft!.cfi = true;
     const pos = road.b === node.id ? road.length - d : d;
-    road.crossovers.push({ id: `${road.id}@${Math.round(pos)}#${node.id}`, roadId: road.id, pos, kind: 'cfi-presignal', fwd: road.b === node.id, bwd: road.a === node.id, signalised: true, storage: 60, waitingFwd: [], waitingBwd: [] });
+    road.crossovers.push({ id: `${road.id}@${Math.round(pos)}#${node.id}`, roadId: road.id, pos, kind: 'cfi-presignal', fwd: road.b === node.id, bwd: road.a === node.id, signalised: true, storage: d, waitingFwd: [], waitingBwd: [], mainNode: node.id, approachLink: link.id });
+    if (plan) plan.leftTreatment[link.id] = 'permitted'; // lefts run with their own through, unopposed
   }
   node.conflictOverrides = overrides;
   refreshNodeLegs(world, node);
   if (node.control.type !== 'signal') node.control = { type: 'signal', minorLinks: [], signal: null, runtime: null, roundaboutLanes: 1 };
-  node.control.signal = autoPlan(node, world, node.control.signal ?? undefined);
+  const base = node.control.signal ?? autoPlan(node, world);
+  for (const leg of major) if (leg.inLink) base.leftTreatment[leg.inLink] = 'permitted';
+  node.control.signal = autoPlan(node, world, base);
   node.control.runtime = emptyRuntime(world.t);
   return ok;
 }
@@ -191,6 +226,31 @@ export function buildInterchange(world: World, node: SimNode, form: 'diamond' | 
     for (const leg of major) if (leg.inLink) node.banned.push(`${leg.inLink}:L`);
   }
   node.conflictOverrides = overrides;
+  // Ramps: an off-ramp pocket on each major approach carries every exiting movement;
+  // an on-ramp merge lane on each major departure receives cross-street traffic.
+  for (const leg of major) {
+    if (leg.inLink) {
+      const link = world.links[leg.inLink];
+      if (link.pocketRight && !link.pocketRight.ramp) return fail('Remove the right-turn pocket first');
+      const r = setPocket(world, link, { side: 'right', storage: Math.min(150, Math.max(40, link.length - 60)), source: 'narrow' });
+      if (!r.ok) return r;
+      link.pocketRight!.ramp = true;
+      link.pocketRight!.allowed = form === 'parclo' ? ['R'] : ['R', 'L', 'U'];
+      link.pocketRight!.width = 3.5;
+      for (const l of link.lanes) if (l.type === 'general') { l.allowed = ['T']; l.width = 3.5; }
+    }
+    if (leg.outLink) {
+      const out = world.links[leg.outLink];
+      if (!out.lanes.some((l) => l.ramp)) {
+        const general = out.lanes.filter((l) => l.type === 'general');
+        const lane = makeLane(out.id, out.lanes.length, 'general', 0, Math.min(150, out.length - 30), []);
+        lane.ramp = true;
+        out.lanes.splice(out.lanes.indexOf(general[general.length - 1]) + 1, 0, lane);
+        indexLane(world, lane);
+        renumberLanes(world, out);
+      }
+    }
+  }
   refreshNodeLegs(world, node);
   node.control = { type: 'signal', minorLinks: [], signal: null, runtime: null, roundaboutLanes: 1 };
   node.control.signal = autoPlan(node, world);

@@ -62,6 +62,8 @@ export function resetDefaultTurns(link: Link): void {
   general.forEach((l, i) => (l.allowed = defaultAllowed(general.length, i)));
   if (link.pocketLeft) for (const l of general) l.allowed = l.allowed.filter((t) => t !== 'L' && t !== 'U');
   if (link.pocketRight) for (const l of general) l.allowed = l.allowed.filter((t) => t !== 'R');
+  // An off-ramp takes every exiting movement; the mainline keeps only the through.
+  if (link.pocketRight?.ramp) for (const l of general) l.allowed = ['T'];
   // A single general lane must still be able to do everything the pockets don't.
   if (general.length === 1 && !general[0].allowed.includes('T')) general[0].allowed.push('T');
 }

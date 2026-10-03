@@ -60,7 +60,11 @@ export class Game {
     this.world = buildWorld(map, seed, this.configOverrides);
     this.startTime = startTime ?? (scenario?.startTimeOfDay ?? 0.25) * this.world.config.dayLength;
     this.world.t = this.startTime;
-    if (scenario) applyCommand(this.world, { type: 'unlock', keys: scenario.unlocks });
+    if (scenario) {
+      applyCommand(this.world, { type: 'unlock', keys: scenario.unlocks });
+      scenario.setup?.(this);
+      this.log.length = 0; // setup is part of the scenario, not the player's log
+    }
   }
 
   static fromScenario(s: Scenario, seed = 1): Game {
