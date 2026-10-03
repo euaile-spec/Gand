@@ -62,7 +62,8 @@ export function lanesAllowing(link: Link, turn: Turn, cls: 'car' | 'bus' | 'truc
 /** Saturation flow (veh/h) for a lane given width and world weather. */
 export function laneSatFlow(lane: Lane, world: World): number {
   const widthFactor = lane.width >= LANE_WIDTH_STANDARD ? 1 : lane.width <= LANE_WIDTH_NARROW ? 0.9 : 0.95;
-  return SAT_FLOW_BASE * widthFactor * world.satFlowFactor;
+  const wear = world.links[lane.linkId]?.wear ?? 0;
+  return SAT_FLOW_BASE * widthFactor * world.satFlowFactor * (1 - 0.15 * wear);
 }
 
 /** Design speed from cross-section: 50 km/h standard, slower for narrow lanes and parking. */

@@ -19,7 +19,7 @@ import {
   type LinkId,
   type Leg,
 } from '../model/types.js';
-import type { MapDef, MapRoadDef } from './mapdef.js';
+import type { MapDef, MapGeneratorDef, MapNodeDef, MapRoadDef } from './mapdef.js';
 import { assignLegs, rebuildNodeMovements } from './geometry.js';
 import { defaultAllowed, indexLane, makeLane, refreshLinkSpeed } from './lanes.js';
 
@@ -99,6 +99,7 @@ export function createLink(world: World, road: Road, dir: 'fwd' | 'bwd', nLanes:
     stopPenalty: 0,
     designSpeed: 0,
     constructionUntil: 0,
+    wear: 0,
   };
   for (let i = 0; i < nLanes; i++) {
     const lane = makeLane(id, i, 'general', 0, road.length, defaultAllowed(nLanes, i));
@@ -197,6 +198,8 @@ export function buildWorld(def: MapDef, seed = 1, configOverrides: Partial<World
     corridors: {},
     interchanges: {},
     structureCounts: {},
+    pendingGrowth: (def.growth ?? []).map((g) => ({ day: g.day, node: { ...g.node }, road: { ...g.road } as Record<string, unknown>, generator: { ...g.generator } as Record<string, unknown> })),
+    grownRoads: [],
   };
 
   const nodePos: Record<string, Point> = {};
@@ -211,87 +214,16 @@ export function buildWorld(def: MapDef, seed = 1, configOverrides: Partial<World
     const parkingB = rd.parkingBwd ?? 'none';
     const median = rd.median ?? 'none';
     const widthLanes = rd.widthLanes ?? fwdLanes + bwdLanes + (parkingF !== 'none' ? 1 : 0) + (parkingB !== 'none' ? 1 : 0) + (median !== 'none' ? 1 : 0);
-    const road: Road = { id: rd.id, a: rd.a, b: rd.b, length: polylineLength(pts), widthLanes, fwdLanes, bwdLanes, oneWay: rd.oneWay ?? 'none', median, points: pts, crossovers: [] };
-    world.roads[road.id] = road;
-    if (fwdLanes > 0) createLink(world, road, 'fwd', fwdLanes, parkingF);
-    if (bwdLanes > 0) createLink(world, road, 'bwd', bwdLanes, parkingB);
+    createRoad(world, rd, pts);
   }
 
   // Nodes with legs
-  for (const nd of def.nodes) {
-    const incident = def.roads.filter((r) => r.a === nd.id || r.b === nd.id);
-    const headings = incident.map((r) => {
-      const pts = roadPoints(r, nodePos);
-      const next = r.a === nd.id ? pts[1] : pts[pts.length - 2];
-      return { roadId: r.id, angle: heading(nodePos[nd.id], next) };
-    });
-    const slots = assignLegs(headings);
-    const legs: NodeLeg[] = incident.map((r) => ({
-      leg: slots.get(r.id) as Leg,
-      roadId: r.id,
-      inLink: null,
-      outLink: null,
-      angle: headings.find((h) => h.roadId === r.id)!.angle,
-      channelisedRight: false,
-      slipMode: 'yield',
-      cornerRadius: 'standard',
-      laneDrop: 'after',
-    }));
-    legs.sort((p, q) => p.leg - q.leg);
-    const node: SimNode = {
-      id: nd.id,
-      pos: nodePos[nd.id],
-      legs,
-      movements: {},
-      conflicts: {},
-      peds: {},
-      control: emptyControl(),
-      boxProtection: true,
-      form: 'standard',
-      banned: [],
-      occupants: [],
-      stopQueue: [],
-      metrics: emptyNodeMetrics(),
-      vms: null,
-      radius: 8,
-    };
-    world.nodes[node.id] = node;
-  }
+  for (const nd of def.nodes) createNode(world, nd.id, nodePos[nd.id]);
+
   refreshAllNodes(world);
 
   // Generators + driveways
-  for (const g of def.generators) {
-    const road = world.roads[g.roadId];
-    const at = roadPosAt(road, g.t);
-    const linkId: LinkId = g.side === 'fwd' ? `${road.id}>` : `${road.id}<`;
-    const link = world.links[linkId] ?? world.links[g.side === 'fwd' ? `${road.id}<` : `${road.id}>`];
-    const gen: Generator = {
-      id: g.id,
-      kind: g.kind,
-      size: g.size,
-      roadId: g.roadId,
-      pos: at.point,
-      drivewayLink: link.id,
-      opensDay: g.opensDay ?? 0,
-      active: (g.opensDay ?? 0) <= 0,
-      lostTrips: 0,
-      walkability: 1,
-      surgeUntil: 0,
-      surgePeople: 0,
-    };
-    world.generators[gen.id] = gen;
-    const dw: Driveway = {
-      generatorId: gen.id,
-      linkId: link.id,
-      pos: link.id.endsWith('>') ? at.fwdPos : at.bwdPos,
-      access: 'full',
-      throatLength: g.throatLength ?? (g.kind === 'stadium' ? 60 : g.kind === 'school' ? 40 : 20),
-      exitQueue: [],
-      leftInWaiting: 0,
-      sharedWith: [],
-    };
-    link.driveways.push(dw);
-  }
+  for (const g of def.generators) addGenerator(world, g);
 
   // Bus routes
   for (const br of def.busRoutes ?? []) {
@@ -329,4 +261,127 @@ export function buildWorld(def: MapDef, seed = 1, configOverrides: Partial<World
   }
 
   return world;
+}
+
+/** Create a road record and its links from a definition. */
+export function createRoad(world: World, rd: MapRoadDef, pts: Point[]): Road {
+  const fwdLanes = rd.oneWay === 'bwd' ? 0 : (rd.fwdLanes ?? 1);
+  const bwdLanes = rd.oneWay === 'fwd' ? 0 : (rd.bwdLanes ?? 1);
+  const parkingF = rd.parkingFwd ?? 'none';
+  const parkingB = rd.parkingBwd ?? 'none';
+  const median = rd.median ?? 'none';
+  const widthLanes = rd.widthLanes ?? fwdLanes + bwdLanes + (parkingF !== 'none' ? 1 : 0) + (parkingB !== 'none' ? 1 : 0) + (median !== 'none' ? 1 : 0);
+  const road: Road = { id: rd.id, a: rd.a, b: rd.b, length: polylineLength(pts), widthLanes, fwdLanes, bwdLanes, oneWay: rd.oneWay ?? 'none', median, points: pts, crossovers: [] };
+  world.roads[road.id] = road;
+  if (fwdLanes > 0) createLink(world, road, 'fwd', fwdLanes, parkingF);
+  if (bwdLanes > 0) createLink(world, road, 'bwd', bwdLanes, parkingB);
+  return road;
+}
+
+/** Create a node with legs computed from the roads currently incident to it. */
+export function createNode(world: World, id: string, pos: Point): SimNode {
+  const node: SimNode = {
+    id,
+    pos,
+    legs: [],
+    movements: {},
+    conflicts: {},
+    peds: {},
+    control: emptyControl(),
+    boxProtection: true,
+    form: 'standard',
+    banned: [],
+    occupants: [],
+    stopQueue: [],
+    metrics: emptyNodeMetrics(),
+    vms: null,
+    radius: 8,
+  };
+  world.nodes[id] = node;
+  recomputeLegs(world, node);
+  return node;
+}
+
+/** Recompute leg slots from incident roads, preserving per-leg settings for roads that stay. */
+export function recomputeLegs(world: World, node: SimNode): void {
+  const incident = Object.values(world.roads).filter((r) => r.a === node.id || r.b === node.id);
+  const headings = incident.map((r) => {
+    const next = r.a === node.id ? r.points[1] : r.points[r.points.length - 2];
+    return { roadId: r.id, angle: heading(node.pos, next) };
+  });
+  const slots = assignLegs(headings);
+  const prev = new Map(node.legs.map((l) => [l.roadId, l]));
+  node.legs = incident.map((r) => {
+    const old = prev.get(r.id);
+    return {
+      leg: slots.get(r.id) as Leg,
+      roadId: r.id,
+      inLink: null,
+      outLink: null,
+      angle: headings.find((h) => h.roadId === r.id)!.angle,
+      channelisedRight: old?.channelisedRight ?? false,
+      slipMode: old?.slipMode ?? 'yield',
+      cornerRadius: old?.cornerRadius ?? 'standard',
+      laneDrop: old?.laneDrop ?? 'after',
+    };
+  });
+  node.legs.sort((p, q) => p.leg - q.leg);
+}
+
+export function addGenerator(world: World, g: MapGeneratorDef): Generator {
+  const road = world.roads[g.roadId];
+  const at = roadPosAt(road, g.t);
+  const linkId: LinkId = g.side === 'fwd' ? `${road.id}>` : `${road.id}<`;
+  const link = world.links[linkId] ?? world.links[g.side === 'fwd' ? `${road.id}<` : `${road.id}>`];
+  const gen: Generator = {
+    id: g.id,
+    kind: g.kind,
+    size: g.size,
+    roadId: g.roadId,
+    pos: at.point,
+    drivewayLink: link.id,
+    opensDay: g.opensDay ?? 0,
+    active: (g.opensDay ?? 0) <= world.day,
+    lostTrips: 0,
+    walkability: 1,
+    surgeUntil: 0,
+    surgePeople: 0,
+  };
+  world.generators[gen.id] = gen;
+  const dw: Driveway = {
+    generatorId: gen.id,
+    linkId: link.id,
+    pos: link.id.endsWith('>') ? at.fwdPos : at.bwdPos,
+    access: 'full',
+    throatLength: g.throatLength ?? (g.kind === 'stadium' ? 60 : g.kind === 'school' ? 40 : 20),
+    exitQueue: [],
+    leftInWaiting: 0,
+    sharedWith: [],
+  };
+  link.driveways.push(dw);
+  return gen;
+}
+
+/**
+ * City growth at runtime: a new stub node and road off an existing node, plus a generator on it.
+ * Returns an error string if the attachment node is full (4 legs) or ids collide.
+ */
+export function addGrowth(world: World, step: { node: MapNodeDef; road: MapRoadDef; generator: MapGeneratorDef }): string | null {
+  const attachId = step.road.a === step.node.id ? step.road.b : step.road.a;
+  const attach = world.nodes[attachId];
+  if (!attach) return `No node ${attachId} to attach to`;
+  if (attach.legs.length >= 4) return `${attachId} already has four legs`;
+  if (world.nodes[step.node.id] || world.roads[step.road.id] || world.generators[step.generator.id]) return 'Growth ids collide with existing ones';
+  const pos = { x: step.node.x, y: step.node.y };
+  // Create the stub node first (no legs yet), then the road, then legs on both ends.
+  const nodePos: Record<string, Point> = { [step.node.id]: pos, [attachId]: attach.pos };
+  const stub = createNode(world, step.node.id, pos);
+  createRoad(world, step.road, roadPoints(step.road, nodePos));
+  recomputeLegs(world, stub);
+  recomputeLegs(world, attach);
+  refreshNodeLegs(world, stub);
+  refreshNodeLegs(world, attach);
+  addGenerator(world, step.generator);
+  world.grownRoads.push(step.road.id);
+  return null;
 }

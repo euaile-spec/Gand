@@ -119,12 +119,19 @@ export function timeSpaceData(world: World, corridor: NodeId[], horizon = 300): 
   return out;
 }
 
-export function delayHeatmap(world: World): { linkId: LinkId; delay: number; occupancy: number }[] {
+export function delayHeatmap(world: World): { linkId: LinkId; delay: number; occupancy: number; wear: number }[] {
   return Object.values(world.links).map((l) => {
     let veh = 0;
     for (const lane of allTrafficLanes(l)) veh += lane.vehicles.length;
-    return { linkId: l.id, delay: world.metrics.linkDelay[l.id] ?? 0, occupancy: veh };
+    return { linkId: l.id, delay: world.metrics.linkDelay[l.id] ?? 0, occupancy: veh, wear: l.wear };
   });
+}
+
+/** Pavement condition overlay: worst links first. */
+export function pavementReport(world: World): { roadId: string; wear: number; grown: boolean }[] {
+  return Object.values(world.roads)
+    .map((r) => ({ roadId: r.id, wear: Math.max(world.links[`${r.id}>`]?.wear ?? 0, world.links[`${r.id}<`]?.wear ?? 0), grown: world.grownRoads.includes(r.id) }))
+    .sort((a, b) => b.wear - a.wear);
 }
 
 export function queueReport(world: World, linkId: LinkId): { laneId: string; queue: number; maxHour: number; history: number[] }[] {
@@ -171,6 +178,8 @@ export function hudSummary(world: World) {
     crashes: world.metrics.crashes,
     incidents: world.incidents.length,
     gameOver: world.gameOver,
+    worstWear: Math.max(0, ...Object.values(world.links).map((l) => l.wear)),
+    pendingGrowth: world.pendingGrowth.length,
   };
 }
 

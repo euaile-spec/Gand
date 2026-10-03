@@ -181,8 +181,13 @@ export class EngineerBot {
       }
     }
 
+    // Construction discipline: one site at a time, never started in a peak (closures bite then).
+    const hour = ((w.t % w.config.dayLength) / w.config.dayLength) * 24;
+    const peak = (hour >= 6.5 && hour < 9.5) || (hour >= 15.5 && hour < 18.5);
+    const canBuild = w.constructions.length === 0 && !peak;
+
     // 6. Corridor capacity: widen the single-lane link with the worst persistent delay, if affordable.
-    if (budget() && w.resources.laneKm > 0.15) {
+    if (budget() && w.resources.laneKm > 0.15 && canBuild) {
       const candidates = Object.values(w.links)
         .filter((l) => generalLanes(l).length === 1 && l.constructionUntil === 0 && this.cool(`${l.roadId}:widen`))
         .map((l) => ({ l, delay: w.metrics.linkDelay[l.id] ?? 0 }))
@@ -202,8 +207,17 @@ export class EngineerBot {
       }
     }
 
+    // 6b. Pavement: repave the most worn road before it breeds stalls.
+    if (budget() && w.resources.laneKm > 0.1 && canBuild) {
+      const worn = Object.values(w.roads)
+        .map((r) => ({ r, wear: Math.max(w.links[`${r.id}>`]?.wear ?? 0, w.links[`${r.id}<`]?.wear ?? 0), busy: w.links[`${r.id}>`]?.constructionUntil ?? 0 }))
+        .filter((x) => x.wear > 0.6 && x.busy === 0 && this.cool(`${x.r.id}:repave`))
+        .sort((a, b) => b.wear - a.wear)[0];
+      if (worn && this.act({ type: 'repave', roadId: worn.r.id }, `pavement wear ${(worn.wear * 100).toFixed(0)}% on ${worn.r.id}`, `${worn.r.id}:repave`)) actions++;
+    }
+
     // 7. Tokens: a roundabout at the busiest balanced non-arterial node.
-    if (budget() && w.resources.tokens > 0) {
+    if (budget() && w.resources.tokens > 0 && canBuild) {
       const cands = Object.values(w.nodes)
         .filter((n) => n.control.type !== 'roundabout' && n.legs.length >= 3 && this.cool(`${n.id}:rab`) && !w.interchanges[n.id])
         .map((n) => ({ n, total: Object.values(n.metrics.demand).reduce((s, d) => s + d, 0), balance: balanceIndex(n) }))

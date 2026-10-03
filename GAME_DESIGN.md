@@ -328,7 +328,7 @@ The headless simulation engine lives in `sim/` (TypeScript, no DOM, deterministi
 | Resources | Lane-km (widen, pockets beyond the free taper, driveway connectors), structure tokens (roundabout 1, one-way 1, MUT/RCUT 1, CFI 2, interchange 3), weekly allotment with the token-or-lanes choice, 100 % refunds where the doc says so, one-day construction closures. |
 | Incidents & events | Conflict score from exposure × unresolved conflicts, driveway density, ped conflicts and dilemma-zone exposure → crashes (lane or node blocking), stalls, double-parked deliveries without a loading zone, parking manoeuvres, signal faults; scheduled stadium let-outs, school pick-up, roadworks, parades, highway dumps, rain. |
 | Instruments | People/hour, person-delay, gridlock meter, LOS per node, HCM-style capacities and v/c per movement, turning movement counts, O-D highlight for a movement, time–space data per corridor, delay heatmap, queue histories, conflict and transit overlays, HUD summary. |
-| Game | `Game` with pause/1×/2×/4×, every edit as a validated `Command`, draft mode with headless preview and commit/discard, seed + command-log saves and exact replay, scenarios with goals and tool unlocks, endless mode with daily growth. |
+| Game | `Game` with pause/1×/2×/4×, every edit as a validated `Command`, draft mode with headless preview and commit/discard, seed + command-log saves and exact replay, scenarios with goals and tool unlocks, endless mode with daily growth, date-seeded daily challenge on procedural cities, scheduled city growth, pavement wear and repaving. |
 
 ### Balancing
 
@@ -347,6 +347,17 @@ Survival with and without the bot, 16-day runs, two seeds each (`sim/src/cli/mul
 Scripted fixed plans on the tutorial map, for reference: stops everywhere day 4; all uncontrolled day 10; arterial signals with permitted lefts day 10; arterial signals, actuated, protected lefts + 60 m pockets **day 14**.
 
 Two findings from the bot that shaped the sim: (1) an *early* version of the bot made things worse on every map, because it signalised too eagerly and because vehicles approached uncontrolled crossings at full speed — everyone now creeps on approach to an uncontrolled node, and the bot uses a stricter signal warrant; (2) a peak-hour parking lane that reverted while vehicles were still landing in it stranded drivers in a lane with no permitted turns — a real bug the bot found in an hour.
+
+### Dynamic maps
+
+The road *alignment* stays fixed within a run in the sense that matters — the player never draws a road — but the map is no longer static:
+
+- **Procedural cities** (`sim/src/maps/procedural.ts`): a seeded generator makes 3–5 × 3–4 grids with one or two 2+2 arterials (open or TWLTL medians), zoned land use (homes west/north, jobs east/south, shops on the arterial), a school, usually a hospital, a stadium that opens mid-run, gateways at the arterial ends plus random edge stubs, a bus loop, and a growth schedule. Same seed, same city.
+- **Daily challenge** (`sim/src/game/daily.ts`): the date hashes to a seed; everyone gets the same procedural city, ten in-game days, 1.0 lane-km a week, and a score to compare.
+- **City growth** (`MapDef.growth`, applied in `tick.ts`): on scheduled days the *city* adds a development — a new stub road off an edge node with a free leg, plus its land use. The attached node gets a new leg; if it is signalised its plan is rebuilt (keeping the player's left treatments), a two-way stop adds the stub to its minor street, and the developer pays 0.2 lane-km toward access. A `new-road` event announces it. A node that already has four legs refuses growth.
+- **Pavement wear** (`Link.wear`): every vehicle pass wears the link — cars ×1, buses ×4, trucks ×8 per kilometre, a nod to the fourth-power law — and severe crashes scar it. Worn pavement lowers free speed (up to −30 %), saturation flow (−15 %) and multiplies the stall rate (×5 at full wear). **Repave** costs 0.015 lane-km per 100 m and closes a lane for a construction day; the pavement overlay shows worst roads first. Nothing else degrades permanently.
+
+The playtest bot handles all of this; two findings from running it on procedural cities: construction must be rationed (it once opened five widening sites at once, each closing a lane for a day, and gridlocked the city it was trying to save — it now builds one site at a time and never in a peak), and procedural seeds vary widely in difficulty, which is what a daily challenge wants.
 
 ### Tutorial chain
 

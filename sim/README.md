@@ -26,7 +26,8 @@ npx tsx src/cli/multi.ts 16 --seeds=3                # maps × seeds × {none, b
 | `src/metrics/` | Rolling people-flow and delay, LOS, HCM-style capacities and v/c, gridlock meter, queue histories; `instruments.ts` read-only queries (TMC, O-D highlight, time-space data, heatmaps, HUD). |
 | `src/editor/` | `commands.ts` every player edit as a validated `Command`; `network-edits.ts` lane/road surgery that keeps vehicles and plans consistent; `transforms.ts` roundabout, MUT, RCUT, CFI, interchanges. |
 | `src/game/` | `tick.ts` orchestration + day/week transitions; `game.ts` `Game` (time control, draft/preview, save/replay, scenario goals); `scenarios.ts`. |
-| `src/maps/` | `tutorial` (3×3 grid, one arterial), `radial` (ring + spokes, tidal), `river` (two banks, three bridges). |
+| `src/maps/` | `tutorial` (3×3 grid, one arterial), `radial` (ring + spokes, tidal), `river` (two banks, three bridges), `procedural` (seeded generator with growth schedule; `--map=procedural:<seed>` in the CLIs). |
+| `src/game/daily.ts` | Date → seed → procedural city, ten days, score. |
 | `src/bot/engineer.ts` | Reactive playtest bot: reads instruments, applies fixes with reasons; ablation via `disabled`. |
 
 ## Using it from a renderer

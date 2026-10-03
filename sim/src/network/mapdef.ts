@@ -45,8 +45,18 @@ export interface MapBusRouteDef {
   stops: { roadId: string; t: number; side: 'fwd' | 'bwd'; kind?: 'curbside' | 'bay' }[];
 }
 
+/** A development the city adds on a given day: a new stub road off an existing node plus its land use. */
+export interface MapGrowthDef {
+  day: number;
+  node: MapNodeDef;
+  road: MapRoadDef;
+  generator: MapGeneratorDef;
+}
+
 export interface MapDef {
   name: string;
+  /** Scheduled city growth (the city draws roads; the player never does). */
+  growth?: MapGrowthDef[];
   nodes: MapNodeDef[];
   roads: MapRoadDef[];
   generators: MapGeneratorDef[];

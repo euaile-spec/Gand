@@ -92,11 +92,12 @@ export function rollIncidents(world: World, dt: number): void {
     const mkey = worst.split(' × ')[0];
     const m = node.movements[mkey];
     if (severe) {
-      // Block the whole node: every inbound lane blocked at the stop line.
+      // Block the whole node: every inbound lane blocked at the stop line. Severe crashes scar the pavement.
       const until = world.t + nextRange(world.rng, 20, 40) * 60;
       for (const leg of node.legs) {
         if (!leg.inLink) continue;
         const link = world.links[leg.inLink];
+        link.wear = Math.min(1, link.wear + 0.05);
         for (const lane of link.lanes) if (lane.type !== 'parking') blockLane(world, lane, link.length - 2, 'severe-crash', until, worst, node.id);
       }
     } else if (m) {
@@ -126,7 +127,7 @@ export function rollIncidents(world: World, dt: number): void {
     }
     // Random stall.
     const veh = general.reduce((s, l) => s + l.vehicles.length, 0);
-    if (veh && poissonEvent(world.rng, (veh * 0.002) / 3600, dt)) {
+    if (veh && poissonEvent(world.rng, (veh * 0.002 * (1 + 4 * link.wear)) / 3600, dt)) {
       const lane = pick(world.rng, general);
       blockLane(world, lane, nextRange(world.rng, 10, Math.max(11, link.length - 10)), 'stall', world.t + nextRange(world.rng, 180, 600), 'stalled vehicle');
     }

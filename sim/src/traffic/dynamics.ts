@@ -109,7 +109,7 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
   const inRequired = required.includes(lane);
 
   // Desired speed
-  let v0 = link.speedLimit * p.desiredSpeedFactor;
+  let v0 = link.speedLimit * p.desiredSpeedFactor * (1 - 0.3 * link.wear);
   if (m && m.turn !== 'T' && link.length - pos < 40) v0 = Math.min(v0, m.speed + 3);
   // Nobody drives through an uncontrolled crossing at speed: approach at a cautious crawl.
   if (m && node.control.type === 'uncontrolled' && node.legs.length >= 3 && link.length - pos < 30) v0 = Math.min(v0, 5);
@@ -416,6 +416,9 @@ function enterNode(world: World, v: Vehicle, lane: Lane, link: Link, node: SimNo
   v.place = { kind: 'node', nodeId: node.id, movement: m.key, pos: Math.max(0, overshoot) };
   node.occupants.push(v.id);
   v.nodeEnterTime = world.t;
+  // Pavement wear: heavy vehicles do the damage (fourth-power law, roughly).
+  const axle = v.cls === 'truck' ? 8 : v.cls === 'bus' ? 4 : 1;
+  link.wear = Math.min(1, link.wear + world.config.wearPerCarKm * axle * (link.length / 1000));
   // Travel time sample for routing.
   const sample = world.t - v.linkEnterT;
   if (sample > 0 && sample < 3600) link.travelTime = link.travelTime + 0.2 * (sample - link.travelTime);

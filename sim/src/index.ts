@@ -9,6 +9,11 @@ export { SCENARIOS, TUTORIAL_CHAIN, scenarioById, nextInChain } from './game/sce
 export { MAPS, mapByName } from './maps/index.js';
 export { radialMap } from './maps/radial.js';
 export { riverMap } from './maps/river.js';
+export { proceduralMap, hashString } from './maps/procedural.js';
+export type { ProceduralOptions } from './maps/procedural.js';
+export { dailyScenario, dailyGame, dailyKey, dailySeed, dailyResult, DAILY_DAYS } from './game/daily.js';
+export { addGrowth } from './network/build.js';
+export type { MapGrowthDef } from './network/mapdef.js';
 export { EngineerBot, summariseBot } from './bot/engineer.js';
 export type { Scenario } from './game/scenarios.js';
 export { applyCommand } from './editor/commands.js';

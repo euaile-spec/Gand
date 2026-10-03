@@ -12,6 +12,9 @@ import { processDrivewayExits } from '../traffic/driveways.js';
 import { stepCrossovers, stepVehicles } from '../traffic/dynamics.js';
 import { updatePedestrians } from '../traffic/pedestrians.js';
 import { defaultAllowed } from '../network/lanes.js';
+import { addGrowth } from '../network/build.js';
+import { autoPlan, emptyRuntime } from '../control/signal.js';
+import type { MapGeneratorDef, MapRoadDef } from '../network/mapdef.js';
 
 export function tick(world: World): void {
   const dt = world.config.tickDt;
@@ -63,7 +66,30 @@ export function onNewDay(world: World): void {
     world.week += 1;
     onNewWeek(world);
   }
+  applyGrowth(world);
   scheduleDailyEvents(world);
+}
+
+/** The city grows: due developments get their access road and land use. */
+export function applyGrowth(world: World): void {
+  const due = world.pendingGrowth.filter((g) => g.day <= world.day);
+  if (!due.length) return;
+  world.pendingGrowth = world.pendingGrowth.filter((g) => g.day > world.day);
+  for (const step of due) {
+    const road = step.road as unknown as MapRoadDef;
+    const err = addGrowth(world, { node: step.node, road, generator: step.generator as unknown as MapGeneratorDef });
+    if (err) continue;
+    const attachId = road.a === step.node.id ? road.b : road.a;
+    const attach = world.nodes[attachId];
+    // A new leg invalidates the signal plan: rebuild it, keeping the player's treatments.
+    if (attach.control.type === 'signal') {
+      attach.control.signal = autoPlan(attach, world, attach.control.signal ?? undefined);
+      attach.control.runtime = emptyRuntime(world.t);
+    }
+    if (attach.control.type === 'two-way-stop' || attach.control.type === 'yield') attach.control.minorLinks.push(`${road.id}${road.a === attachId ? '<' : '>'}`);
+    world.resources.laneKm += 0.2; // the developer pays for access
+    world.events.push({ id: world.nextEventId++, kind: 'new-road', start: world.t, end: world.t + 1, target: road.id, announced: false, applied: true, closedLanes: [] });
+  }
 }
 
 /** Peak-hour parking bans: the curb lane carries traffic during peaks and reverts when it empties. */

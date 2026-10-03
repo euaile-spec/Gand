@@ -171,6 +171,8 @@ export interface Link {
   constructionUntil: number;
   /** Grade-separated free-flow link (bridge) — no node control at its ends. */
   bridge?: boolean;
+  /** Pavement wear 0..1 from vehicle passes (trucks and buses wear it fastest). Slows traffic, breeds stalls. */
+  wear: number;
 }
 
 export interface Road {
@@ -489,7 +491,7 @@ export interface Resources {
 
 export interface Construction {
   id: number;
-  kind: 'widen' | 'pocket' | 'roundabout' | 'transform' | 'interchange' | 'connector';
+  kind: 'widen' | 'pocket' | 'roundabout' | 'transform' | 'interchange' | 'connector' | 'repave';
   linkId: LinkId | null;
   nodeId: NodeId | null;
   laneId: LaneId | null; // lane closed during works
@@ -512,7 +514,7 @@ export interface Incident {
   cause: string;
 }
 
-export type EventKind = 'stadium-letout' | 'school-pickup' | 'roadworks' | 'parade' | 'highway-dump' | 'rain' | 'new-generator';
+export type EventKind = 'stadium-letout' | 'school-pickup' | 'roadworks' | 'parade' | 'highway-dump' | 'rain' | 'new-generator' | 'new-road';
 
 export interface WorldEvent {
   id: number;
@@ -583,6 +585,8 @@ export interface WorldConfig {
   constructionDays: number;
   previewSeconds: number;
   rainSatFlowFactor: number;
+  /** Wear added per car-pass per kilometre. */
+  wearPerCarKm: number;
 }
 
 export interface World {
@@ -621,6 +625,10 @@ export interface World {
   interchanges: Record<NodeId, { bridgeLinks: LinkId[]; terminals: NodeId[]; form: 'diamond' | 'spui' | 'ddi' | 'parclo' }>;
   /** Number of structures built (for limits). */
   structureCounts: Record<string, number>;
+  /** City growth not yet applied (plain copies of the map's growth steps). */
+  pendingGrowth: { day: number; node: { id: string; x: number; y: number }; road: Record<string, unknown>; generator: Record<string, unknown> }[];
+  /** Roads added by growth, for the renderer and instruments. */
+  grownRoads: RoadId[];
 }
 
 export const DEFAULT_CONFIG: WorldConfig = {
@@ -644,6 +652,7 @@ export const DEFAULT_CONFIG: WorldConfig = {
   constructionDays: 1,
   previewSeconds: 300,
   rainSatFlowFactor: 0.9,
+  wearPerCarKm: 1.5e-5,
 };
 
 export const VEHICLE_PARAMS: Record<VehicleClass, VehicleParams> = {

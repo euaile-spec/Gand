@@ -45,6 +45,7 @@ export type Command =
   | { type: 'setMedian'; roadId: string; median: 'none' | 'open' | 'closed' | 'twltl' }
   | { type: 'setOneWay'; roadId: string; mode: 'none' | 'fwd' | 'bwd' }
   | { type: 'setMergeStyle'; linkId: LinkId; style: 'taper' | 'zipper' }
+  | { type: 'repave'; roadId: string }
   | { type: 'setNoLeftIntoDriveways'; linkId: LinkId; on: boolean }
   // node geometry
   | { type: 'setLaneDrop'; nodeId: NodeId; leg: number; mode: 'after' | 'before' }
@@ -86,6 +87,7 @@ export type Command =
   | { type: 'unlock'; keys: string[] };
 
 export const SLIP_COST_KM = 0.04;
+export const REPAVE_COST_PER_100M = 0.015;
 
 const UNLOCK_FOR: Partial<Record<Command['type'], string>> = {
   setPocket: 'pocket',
@@ -234,6 +236,21 @@ function dispatch(world: World, cmd: Command): Result {
         return r;
       }
       return setOneWay(world, road, cmd.mode);
+    }
+    case 'repave': {
+      const road = world.roads[cmd.roadId];
+      if (!road) return fail('No such road');
+      const links = [world.links[`${road.id}>`], world.links[`${road.id}<`]].filter(Boolean);
+      if (links.some((l) => l.constructionUntil > world.t)) return fail('Already under construction');
+      const km = REPAVE_COST_PER_100M * (road.length / 100);
+      if (!canAffordLaneKm(world, km)) return fail(`Needs ${km.toFixed(2)} lane-km`);
+      spendLaneKm(world, km);
+      for (const link of links) {
+        const general = generalLanes(link);
+        scheduleConstruction(world, { kind: 'repave', linkId: link.id, nodeId: null, laneId: general.length > 1 ? general[general.length - 1].id : null, payload: { linkId: link.id } });
+        if (general.length <= 1) link.speedLimit = link.designSpeed * 0.6;
+      }
+      return ok;
     }
     case 'setMergeStyle': {
       const link = world.links[cmd.linkId];
@@ -592,6 +609,14 @@ function dispatch(world: World, cmd: Command): Result {
 
 // Construction completion effects.
 registerConstructionApplier((world, c) => {
+  if (c.kind === 'repave') {
+    const { linkId } = c.payload as { linkId: string };
+    const link = world.links[linkId];
+    if (link) {
+      link.wear = 0;
+      link.speedLimit = link.designSpeed;
+    }
+  }
   if (c.kind === 'widen') {
     const { roadId, dir } = c.payload as { roadId: string; dir: 'fwd' | 'bwd' };
     const road = world.roads[roadId];
