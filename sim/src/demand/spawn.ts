@@ -173,9 +173,22 @@ export function generateDemand(world: World, dt: number): void {
 }
 
 /** Dispatch buses on their headway from the depot link start. */
+/** Buses needed to hold the headway: loop time / headway (observed travel times + dwell). */
+export function fleetSize(world: World, route: { links: LinkId[]; stops: string[]; headway: number }): number {
+  let loop = 0;
+  for (const id of route.links) loop += world.links[id]?.travelTime ?? 0;
+  loop += route.stops.length * 20 + route.links.length * 8;
+  return Math.max(1, Math.ceil(loop / route.headway));
+}
+
 export function dispatchBuses(world: World): void {
   for (const route of Object.values(world.busRoutes)) {
+    route.activeBuses = route.activeBuses.filter((id) => world.vehicles[id]);
     if (world.t < route.nextDispatch) continue;
+    if (route.activeBuses.length >= fleetSize(world, route)) {
+      route.nextDispatch = world.t + 30; // fleet is out; check again shortly
+      continue;
+    }
     const link = world.links[route.links[0]];
     if (!link) continue;
     const drivable = link.lanes.filter((l) => l.type === 'general' || l.type === 'bus');
@@ -193,9 +206,5 @@ export function dispatchBuses(world: World): void {
     route.nextDispatch = world.t + route.headway;
     // Buses stay in service for a bounded time to keep the fleet finite.
     bus.freeFlowTime = 0;
-  }
-  // Retire buses that have looped a long time and are empty (keeps counts bounded).
-  for (const route of Object.values(world.busRoutes)) {
-    route.activeBuses = route.activeBuses.filter((id) => world.vehicles[id]);
   }
 }

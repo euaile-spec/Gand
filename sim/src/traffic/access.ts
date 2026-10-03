@@ -47,18 +47,35 @@ export function nextMovement(world: World, v: Vehicle): Movement | null {
   if (!cur || !nxt) return null;
   const link = world.links[cur];
   if (!link) return null;
-  // A reverse-link successor means a mid-block U-turn at a crossover, not a node movement.
-  if (world.links[nxt]?.roadId === link.roadId && nxt !== cur) return null;
+  // A reverse-link successor is a mid-block U-turn when a crossover lies ahead; otherwise a node U-turn.
+  if (world.links[nxt]?.roadId === link.roadId && nxt !== cur && crossoverAhead(world, v, link)) return null;
   const node = world.nodes[link.to];
   for (const m of Object.values(node.movements)) if (m.fromLink === cur && m.toLink === nxt) return m;
   return null;
+}
+
+/** Is there a usable U-turn crossover ahead of the vehicle on its current link? */
+export function crossoverAhead(world: World, v: Vehicle, link: { id: LinkId; roadId: string; length: number }): boolean {
+  const road = world.roads[link.roadId];
+  if (!road || !road.crossovers.length) return false;
+  const fwd = link.id.endsWith('>');
+  const pos = v.place.kind === 'lane' ? v.place.pos : 0;
+  for (const xo of road.crossovers) {
+    if (xo.kind !== 'uturn') continue;
+    if (fwd ? !xo.fwd : !xo.bwd) continue;
+    const xpos = fwd ? xo.pos : road.length - xo.pos;
+    if (xpos >= pos - 1) return true;
+  }
+  return false;
 }
 
 export function isCrossoverNext(world: World, v: Vehicle): boolean {
   const cur = currentLink(v);
   const nxt = nextLink(v);
   if (!cur || !nxt || cur === nxt) return false;
-  return world.links[nxt]?.roadId === world.links[cur]?.roadId;
+  const link = world.links[cur];
+  if (!link || world.links[nxt]?.roadId !== link.roadId) return false;
+  return crossoverAhead(world, v, link);
 }
 
 export function nodeOf(world: World, v: Vehicle): SimNode | null {

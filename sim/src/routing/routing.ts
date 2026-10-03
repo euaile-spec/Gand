@@ -63,6 +63,15 @@ export function movementCost(world: World, node: SimNode, m: Movement): number {
   return base + m.length / Math.max(1, m.speed);
 }
 
+/** A link is closed when every general lane is blocked at (or near) its start. */
+export function linkClosed(world: World, linkId: LinkId): boolean {
+  const link = world.links[linkId];
+  if (!link) return true;
+  const general = link.lanes.filter((l) => l.type === 'general' || l.type === 'bus');
+  if (!general.length) return true;
+  return general.every((l) => l.blockedAt !== null && l.blockedAt < l.start + 12);
+}
+
 function edges(world: World, from: LinkId, opts: RouteOptions): Edge[] {
   const link = world.links[from];
   const out: Edge[] = [];
@@ -76,6 +85,7 @@ function edges(world: World, from: LinkId, opts: RouteOptions): Edge[] {
       if (node.banned.includes(m.key)) continue;
       const toLink = world.links[m.toLink];
       if (!toLink) continue;
+      if (linkClosed(world, m.toLink)) continue;
       if (!lanesAllowing(link, m.turn, opts.cls).length) continue;
       // Trucks can't make tight right turns.
       if ((opts.cls === 'truck' || opts.cls === 'bus') && m.turn === 'R') {
@@ -88,7 +98,7 @@ function edges(world: World, from: LinkId, opts: RouteOptions): Edge[] {
   // Mid-block U-turn via a crossover onto the reverse link.
   const road = world.roads[link.roadId];
   const rev = from.endsWith('>') ? `${road.id}<` : `${road.id}>`;
-  if (world.links[rev]) {
+  if (world.links[rev] && !linkClosed(world, rev)) {
     for (const xo of road.crossovers) {
       if (xo.kind !== 'uturn') continue;
       const fwd = from.endsWith('>');

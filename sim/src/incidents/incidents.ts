@@ -134,9 +134,10 @@ export function rollIncidents(world: World, dt: number): void {
   // Signal malfunction.
   for (const node of Object.values(world.nodes)) {
     if (node.control.type !== 'signal' || !node.control.runtime || node.control.runtime.malfunction) continue;
-    if (poissonEvent(world.rng, 0.03 / world.config.dayLength, dt)) {
+    if (poissonEvent(world.rng, 0.01 / world.config.dayLength, dt)) {
       node.control.runtime.malfunction = true;
-      world.incidents.push({ id: world.nextIncidentId++, kind: 'signal-malfunction', laneId: null, nodeId: node.id, pos: 0, until: Infinity, cause: 'controller fault' });
+      // Flashing red until the player resets it, or a technician arrives after 20 minutes.
+      world.incidents.push({ id: world.nextIncidentId++, kind: 'signal-malfunction', laneId: null, nodeId: node.id, pos: 0, until: world.t + 1200, cause: 'controller fault' });
     }
   }
 }
@@ -144,9 +145,16 @@ export function rollIncidents(world: World, dt: number): void {
 /** Clear expired incidents and recompute lane blockages. */
 export function expireIncidents(world: World): void {
   const before = world.incidents.length;
+  const expired = world.incidents.filter((i) => i.until <= world.t);
+  if (!expired.length) return;
   world.incidents = world.incidents.filter((i) => i.until > world.t);
-  if (world.incidents.length === before) return;
-  recomputeBlockages(world);
+  for (const i of expired) {
+    if (i.kind === 'signal-malfunction' && i.nodeId) {
+      const rt = world.nodes[i.nodeId]?.control.runtime;
+      if (rt) rt.malfunction = false;
+    }
+  }
+  if (world.incidents.length !== before) recomputeBlockages(world);
 }
 
 /** Lane.blockedAt is the min over active incidents and constructions on that lane. */

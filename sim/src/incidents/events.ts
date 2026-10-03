@@ -2,6 +2,7 @@
 import { chance, nextInt, pick } from '../core/rng.js';
 import type { WorldEvent, EventKind, World } from '../model/types.js';
 import { recomputeBlockages } from './incidents.js';
+import { rerouteVehicle } from '../routing/routing.js';
 
 function addEvent(world: World, kind: EventKind, start: number, end: number, target: string | null): WorldEvent {
   const e: WorldEvent = { id: world.nextEventId++, kind, start, end, target, announced: false, applied: false, closedLanes: [] };
@@ -119,7 +120,16 @@ export function updateEvents(world: World): void {
       e.end = -1; // mark done
     }
   }
-  if (blockagesDirty) recomputeBlockages(world);
+  if (blockagesDirty) {
+    recomputeBlockages(world);
+    // Drivers learn of closures: re-route anyone whose route still uses a closed lane's link.
+    const closedLinks = new Set<string>();
+    for (const e of world.events) for (const id of e.closedLanes) closedLinks.add(world.lanes[id]?.linkId ?? '');
+    for (const v of Object.values(world.vehicles)) {
+      if (v.cyclic) continue;
+      if (v.route.some((l, i) => i > v.routeIdx && closedLinks.has(l))) rerouteVehicle(world, v);
+    }
+  }
   // Prune old events.
   if (world.events.length > 200) world.events = world.events.filter((e) => e.end !== -1 || world.t - e.start < world.config.dayLength);
 }

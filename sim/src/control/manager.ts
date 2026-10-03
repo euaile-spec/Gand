@@ -105,6 +105,9 @@ function gapAccepted(world: World, node: SimNode, m: Movement, v: Vehicle, appro
     if (a.v.speed < 0.5) {
       if (!a.atLine) continue;
       if (a.v.stopLineArrival === 0 || (v.stopLineArrival > 0 && a.v.stopLineArrival > v.stopLineArrival)) continue;
+      // A vehicle that has sat at the line for a while is waiting on something else (blocked, no gap):
+      // drivers go around it rather than wait forever.
+      if (world.t - a.v.stopLineArrival > 8) continue;
       if (v.stopLineArrival > 0 && a.v.stopLineArrival === v.stopLineArrival && a.v.id > v.id) continue;
       lastGapThreat = `${a.v.id}@${a.movement.key} stopped-at-line arrived ${a.v.stopLineArrival.toFixed(0)} vs mine ${v.stopLineArrival.toFixed(0)}`;
       return false;
@@ -270,6 +273,7 @@ function isFreeFlowMovement(node: SimNode, m: Movement): boolean {
 export function destinationHasRoom(world: World, node: SimNode, v: Vehicle, m: Movement): boolean {
   const lane = destinationLane(world, v, m);
   if (!lane) return false;
+  if (lane.blockedAt !== null && lane.blockedAt < lane.start + vehicleLength(v) + 3) return false;
   const last = lane.vehicles.length ? world.vehicles[lane.vehicles[lane.vehicles.length - 1]] : null;
   if (!last) return true;
   const rear = posOf(world, last.id) - vehicleLength(last);

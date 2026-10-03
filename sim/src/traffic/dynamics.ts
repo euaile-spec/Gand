@@ -8,7 +8,7 @@ import type { Lane, Link, Movement, SimNode, Vehicle, World } from '../model/typ
 import { allTrafficLanes, neighbourLane } from '../network/lanes.js';
 import { approachingVehicles, destinationLane, mayEnter, viewFor, type Approaching, type EntryDecision } from '../control/manager.js';
 import type { SignalView } from '../control/signal.js';
-import { rerouteVehicle } from '../routing/routing.js';
+import { destinationLinks, rerouteVehicle, shortestPath } from '../routing/routing.js';
 import {
   addToLane,
   currentLink,
@@ -199,8 +199,12 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
     // A leader at the stop line with a stop decision is already an obstacle.
   }
   if (!m && !crossoverNext && !arriving) {
-    // Route ends here with no destination position (should not happen); stop at the end.
+    // No way forward from this link (route broken by an edit, or an invalid hop): stop at the end and re-route.
     obs = nearer(obs, staticObstacle(pos, link.length, v));
+    if (!v.cyclic && world.t >= v.nextReroute) {
+      v.nextReroute = world.t + 10;
+      if (!rerouteVehicle(world, v)) improvise(world, v, lane, link);
+    }
   }
   // Approaching node when ending on a different leg of the *same* link but lane disallows (handled above).
 
@@ -235,7 +239,10 @@ function stepOnLane(world: World, v: Vehicle, dt: number, nodeCache: (n: SimNode
     enterNode(world, v, lane, link, node, m, newPos - link.length);
     return;
   }
-  if (newPos > link.length) newPos = link.length;
+  if (newPos > link.length) {
+    newPos = link.length;
+    v.speed = 0;
+  }
   (v.place as { pos: number }).pos = newPos;
 }
 
@@ -362,19 +369,19 @@ function improvise(world: World, v: Vehicle, lane: Lane, link: Link): void {
   const options = Object.values(node.movements).filter((m) => m.fromLink === link.id && lane.allowed.includes(m.turn) && !node.banned.includes(m.key));
   if (!options.length) return;
   const m = options[0];
-  v.route = [link.id, m.toLink];
-  v.routeIdx = 0;
   v.improvising = true;
   v.patience = 0.5;
-  // Try to complete the route from the new link; if impossible, keep the two-link route and retry later.
-  const saved = v.route;
-  v.routeIdx = 1;
-  if (!rerouteVehicle(world, v)) {
-    v.route = saved;
-  } else {
-    v.route = [link.id, ...v.route];
-  }
+  // Complete the route from the new link; if impossible, keep the two-link route and retry later.
+  const dests = v.destGen ? destinationLinks(world, v.destGen) : [];
+  const rest = dests.length ? shortestPath(world, m.toLink, { cls: v.cls, destLinks: dests, originFraction: 0 }) : null;
+  v.route = rest ? [link.id, ...rest] : [link.id, m.toLink];
   v.routeIdx = 0;
+  if (rest && v.destGen) {
+    const gen = world.generators[v.destGen];
+    const dw = world.links[gen.drivewayLink].driveways.find((d) => d.generatorId === gen.id);
+    const last = v.route[v.route.length - 1];
+    if (dw) v.destPos = last === gen.drivewayLink ? dw.pos : world.links[last].length - dw.pos;
+  }
 }
 
 // ───────────────────────────── node traversal ─────────────────────────────
