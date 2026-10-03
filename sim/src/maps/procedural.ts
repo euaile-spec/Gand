@@ -152,14 +152,14 @@ export function proceduralMap(seed: number, opts: ProceduralOptions = {}): MapDe
   }
 
   // Offset intersections: split one interior non-arterial crossing into two T-junctions 35 m apart.
-  if (chance(rng, 0.6)) {
+  {
     const interiorNodes = nodes.filter((n) => {
       if (!n.id.startsWith('n')) return false;
       const r = Number(n.id[1]);
       const c = Number(n.id[2]);
       return r > 0 && r < rows - 1 && c > 0 && c < cols - 1 && r !== artRow && c !== artCol;
     });
-    if (interiorNodes.length) {
+    if (interiorNodes.length && chance(rng, 0.75)) {
       const n = pick(rng, interiorNodes);
       const r = Number(n.id[1]);
       const c = Number(n.id[2]);
