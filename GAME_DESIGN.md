@@ -38,10 +38,11 @@ The ownership is clear: **topology is given, flow is yours.**
 
 ### 3.1 The Map
 
-- A grid-ish city on a fixed canvas. Roads are pre-laid: a mix of 1-lane-per-direction locals, 2-lane collectors, and a 3-lane arterial or two.
-- **Trip generators** (houses, offices, shops, a stadium, a school) spawn trips between each other on a schedule. Demand grows over time and new generators activate as the city "grows" — but roads never change.
-- **Intersections** are the editable unit. Every point where two or more roads meet is one. Most start as plain uncontrolled 4-ways or T-junctions with one lane each way and all turns permitted.
-- **Road segments** between intersections are also editable (lane allocation only — you can't widen the pavement, but you can decide what the lanes do).
+- A grid-ish city on a fixed canvas. Roads are pre-laid and their *alignment* never changes — no new roads, no removed roads.
+- **Starting widths:** nearly every road starts as **1+1** (one lane each way). One or two **arterials start pre-widened at 2+2** so the lane-assignment puzzle is visible from day one and the player immediately wants it elsewhere. All other widening is earned (see §3.7).
+- **Trip generators** (houses, offices, shops, a stadium, a school) spawn trips between each other on a schedule. Demand grows over time and new generators activate as the city "grows."
+- **Intersections** are the editable unit. Every point where two or more roads meet is one. **All start uncontrolled** with all turns permitted. The first jam at an uncontrolled 4-way *is* the tutorial.
+- **Road segments** between intersections are also editable: lane allocation is always free; adding lanes costs lane-km (§3.7).
 
 ### 3.2 Cars
 
@@ -86,7 +87,8 @@ Click an intersection to open the editor. It's a top-down close-up of just that 
 ### 3.4 Road Segment Editor
 
 Click a road segment between two intersections:
-- Reallocate lanes: e.g. convert a 2+2 road into a 3+1 (tidal flow) or a 1+1 with a center turn lane.
+- **Widen**: add one lane in one direction. Costs lane-km (§3.7) and closes a lane for one in-game day during construction. Removing a lane refunds 100%.
+- Reallocate lanes (free): e.g. convert a 2+2 road into a 3+1 (tidal flow) or a 1+1 with a center turn lane.
 - **One-way** conversion: both lanes go one direction. Cars reroute. Huge capacity gain on that corridor, huge headache for anything that used to go the other way.
 - Add **turn restrictions** mid-block (no left into that driveway).
 - Set **speed** (affects yellow timing, saturation flow, and how fast spillback happens).
@@ -107,13 +109,32 @@ Difficulty comes from demand, not from new topology:
 - **Events:** the stadium empties all at once; a school zone drops speed at 3pm; a road segment closes for a week of "roadworks" and you must reroute around it with turn restrictions and one-ways.
 - **New generators:** a mall opens on an already-strained corridor. You can't say no.
 
-### 3.7 Economy (light)
+### 3.7 Resources
 
-Keep it minimal — the puzzle is the fun, not the budget.
-- You earn **points** continuously from completed trips.
-- Signals and lane changes are **free and instant** (iteration is the game).
-- Roundabouts, overpasses, and one-way conversions cost points and take in-game time to "build" (traffic worsens during construction — a deliberate risk/reward).
-- Optional **daily challenge** mode: fixed seed, fixed map, 10 in-game days, leaderboard on total flow.
+No money. Like *Mini Motorways*, pressure comes from scarcity of a **physical** resource you receive on a weekly cadence, not from a currency you grind. Difficulty is tunable with one number (weekly lane-km).
+
+**Always free and instant** — the iterate-watch-iterate loop is never gated:
+- Signal timing, phases, protected/permitted settings, right-on-red, actuation, coordination offsets.
+- Turn permissions per lane.
+- Control type among uncontrolled / yield / stop / all-way stop / signal.
+- Lane *reallocation* within a segment's existing width (tidal flow, center turn lane).
+- Stop-line turn pockets carved from the approach taper (narrower lanes = lower saturation flow; that's the cost).
+
+**Two spendable resources:**
+
+| Resource | Spent on | Earned | Refund |
+|---|---|---|---|
+| **Lane-km** | Widening a segment by one lane in one direction. A 300 m segment costs 0.3 lane-km. | Fixed allotment every in-game week. One-time bonus when a new trip generator opens ("the mall paid for its own access"). | 100% when a lane is removed — experimentation is cheap, *placement* is the constraint. |
+| **Structure tokens** | Roundabout (1), one-way conversion (1), overpass (3). | Each week the player picks **one**: a structure token **or** a bonus lane-km allotment. Never both. | Roundabout and overpass: 100%. One-way conversion: **not refunded** — it's a commitment. |
+
+**Disruption cost:** widening, roundabouts and overpasses close a lane at that location for one in-game day while under construction. You can't fix a rush-hour jam by widening *during* rush hour — you either planned it last night, or you fix it with signals right now. This keeps the free tools relevant in the late game.
+
+**Why this shape:**
+- Lane-km is spent on *corridors*, so the real decision is "which corridor is the bottleneck this week?" Triage, not shopping.
+- The weekly token-or-lanes choice is Mini Motorways' "roundabout or motorway" beat with higher stakes.
+- Full refunds mean a wrong widening is a lost day, not a lost run.
+
+**Score** is total completed trips, weighted down by average delay (so a high-volume gridlock-adjacent city scores below a smaller smooth one). Optional **daily challenge**: fixed seed, fixed map, fixed weekly allotment, 10 in-game days, leaderboard.
 
 ---
 
@@ -163,7 +184,8 @@ Each city is a run. Unlocks persist across runs:
 ## 7. MVP Scope (first playable)
 
 **In:**
-- One hand-made grid map, ~9 intersections, 2 road widths.
+- One hand-made grid map, ~9 intersections. All roads 1+1 except one 2+2 arterial.
+- Weekly lane-km allotment and segment widening with 1-day construction. No structure tokens yet.
 - Cars with lane-aware queuing, box-blocking, and spillback.
 - Intersection editor: lane turn assignment, stop/yield/all-way stop, fixed-time signals with phase ring, protected/permitted lefts.
 - Demand growth + AM/PM peak.
@@ -180,5 +202,5 @@ Each city is a run. Unlocks persist across runs:
 
 - Should cars ever be allowed to U-turn or pick a different destination when delayed too long? (Pro: realism and self-healing. Con: hides your mistakes.)
 - Pedestrian phases: a real signal constraint, and a nice late-game complexity — or just noise?
-- Is "roads are fixed" too restrictive for late game? Possible compromise: very rare, very expensive "add one lane" tokens.
-- Score: total flow, or flow weighted by delay (penalizing jams rather than just rewarding volume)?
+- Weekly lane-km allotment: should it scale with city size, or stay flat so the late game is genuinely starved?
+- Should the week-end token-or-lanes choice be offered as a card pick (Mini Motorways style) or a quiet menu? Card pick is more legible; menu is less interrupting.
