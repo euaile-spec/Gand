@@ -4,7 +4,7 @@
  */
 import { Game } from '../game/game.js';
 import { EngineerBot } from '../bot/engineer.js';
-import { MAPS } from '../maps/index.js';
+import { MAPS, mapByName } from '../maps/index.js';
 
 const days = Number(process.argv[2] ?? 14);
 const seeds = Number(process.argv.find((a) => a.startsWith('--seeds='))?.split('=')[1] ?? 3);
@@ -21,7 +21,7 @@ interface Row {
 }
 
 function run(map: string, seed: number, useBot: boolean): Row {
-  const g = new Game(MAPS[map](), seed);
+  const g = new Game(mapByName(map)(), seed);
   const bot = useBot ? new EngineerBot(g) : null;
   const D = g.world.config.dayLength;
   let peakFlow = 0;
